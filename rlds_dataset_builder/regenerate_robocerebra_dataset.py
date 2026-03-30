@@ -47,7 +47,7 @@ set_seed_everywhere(seed)
 # --------------------------------------------------------------------------- #
 #                    RoboCerebra Scene -> MJCF -> Texture Utilities           #
 # --------------------------------------------------------------------------- #
-LIBERO_ROOT = Path("/home/featurize/RoboCerebra/LIBERO")  # Set path to LIBERO installation directory
+LIBERO_ROOT = Path("/home/kslab/feli/work/Desktop/RoboCerebra/LIBERO")  # Set path to LIBERO installation directory
 
 SCENES = {
     "coffee_table": {

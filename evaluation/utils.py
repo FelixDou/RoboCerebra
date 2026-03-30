@@ -12,11 +12,17 @@ import logging
 import os
 import pickle
 import re
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Any
 
 import numpy as np
 from robosuite import load_controller_config
+
+LIBERO_SRC_ROOT = Path(__file__).resolve().parents[1] / "LIBERO"
+if str(LIBERO_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(LIBERO_SRC_ROOT))
+
 import libero.libero.envs.bddl_utils as BDDLUtils
 from libero.libero.envs import *  # noqa: F403
 

@@ -62,8 +62,8 @@ class GenerateConfig:
     # ------------------------------------------------------------------
     # RoboCerebra environment‑specific parameters
     # ------------------------------------------------------------------
-    robocerebra_root: str = "/home/featurize/RoboCerebra/RoboCerebra_Bench"
-    init_files_root: str = "/home/featurize/RoboCerebra/RoboCerebra_Bench/init_files"
+    robocerebra_root: str = "/home/kslab/feli/work/Desktop/RoboCerebra/robocerebra_data/RoboCerebraBench"
+    init_files_root: str = "/home/kslab/feli/work/Desktop/RoboCerebra/robocerebra_data/RoboCerebraBench/init_files"
     task_suite_name: str = "robocerebra"
     task_types: List[str] = None  # Which task types to evaluate
     num_steps_wait: int = 15

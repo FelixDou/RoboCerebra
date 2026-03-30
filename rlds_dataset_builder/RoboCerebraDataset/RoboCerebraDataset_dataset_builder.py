@@ -130,5 +130,5 @@ class RoboCerebraDataset(MultiThreadedDatasetBuilder):
 
     def _split_paths(self):
         return {
-            'train': glob.glob('<CONVERTED_HDF5_PATH>/robocerebra_ideal/all_hdf5/*.hdf5'),  # TODO: Set converted HDF5 path
+            'train': glob.glob('/home/kslab/feli/work/Desktop/RoboCerebra/rlds_dataset_builder/converted_hdf5/robocerebra_ideal/all_hdf5/*.hdf5'),
         }
