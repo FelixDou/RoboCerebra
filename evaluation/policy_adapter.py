@@ -139,17 +139,19 @@ def _initialize_pi0_policy(cfg) -> PolicyRuntime:
     if policy_cfg is None:
         raise ValueError("Loaded PI0 policy does not expose a `.config` attribute.")
 
-    preprocessor, postprocessor = make_pre_post_processors(
-        policy_cfg,
-        pretrained_path=str(cfg.pretrained_checkpoint),
-    )
+    preprocessor, postprocessor = None, None
+    if make_pre_post_processors is not None:
+        preprocessor, postprocessor = make_pre_post_processors(
+            policy_cfg,
+            pretrained_path=str(cfg.pretrained_checkpoint),
+        )
 
-    if hasattr(preprocessor, "eval"):
-        preprocessor.eval()
-    if hasattr(postprocessor, "eval"):
-        postprocessor.eval()
+        if hasattr(preprocessor, "eval"):
+            preprocessor.eval()
+        if hasattr(postprocessor, "eval"):
+            postprocessor.eval()
 
-    input_features = getattr(policy_cfg, "input_features", {}) or {}
+    input_features = _extract_pi0_input_features(policy_cfg)
 
     return PolicyRuntime(
         model_family="pi0",
@@ -208,11 +210,13 @@ def _build_pi0_batch(policy_runtime: PolicyRuntime, observation: Dict[str, Any],
     state_features: List[str] = []
 
     for feature_name, feature_spec in policy_runtime.input_features.items():
-        if feature_name.startswith("observation.images.empty_camera_"):
+        if not isinstance(feature_name, str):
+            continue
+        if ".images." in feature_name and "empty_camera_" in feature_name:
             batch[feature_name] = _empty_camera_tensor(feature_spec, full_image)
-        elif feature_name.startswith("observation.images."):
+        elif ".images." in feature_name:
             visual_features.append(feature_name)
-        elif feature_name.startswith("observation.state"):
+        elif feature_name.startswith("observation.state") or feature_name.endswith(".state"):
             state_features.append(feature_name)
 
     if not visual_features:
@@ -335,34 +339,40 @@ def _to_numpy_action(action: Any) -> np.ndarray:
     return np.squeeze(action)
 
 
+def _extract_pi0_input_features(policy_cfg: Any) -> Dict[str, Any]:
+    """Read input-feature metadata across LeRobot API revisions."""
+    for attr_name in ("input_features", "observation_features", "input_shapes"):
+        features = getattr(policy_cfg, attr_name, None)
+        if features:
+            return dict(features)
+    return {}
+
+
 def _import_pi0_components():
     make_pre_post_processors = None
-    pi0_policy_cls = None
-
-    try:
-        from lerobot.policies.factory import make_pre_post_processors as current_make_pre_post_processors
-        make_pre_post_processors = current_make_pre_post_processors
-    except ImportError:
-        try:
-            from lerobot.common.policies.factory import make_pre_post_processors as legacy_make_pre_post_processors
-            make_pre_post_processors = legacy_make_pre_post_processors
-        except ImportError as exc:
-            raise ImportError(
-                "Could not import LeRobot processor factory. Install a LeRobot version that provides "
-                "`make_pre_post_processors`."
-            ) from exc
 
     try:
         from lerobot.policies.pi0.modeling_pi0 import PI0Policy as current_pi0_policy_cls
         pi0_policy_cls = current_pi0_policy_cls
-    except ImportError:
         try:
-            from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy as legacy_pi0_policy_cls
-            pi0_policy_cls = legacy_pi0_policy_cls
-        except ImportError as exc:
-            raise ImportError(
-                "Could not import `PI0Policy`. Install LeRobot with PI0 support "
-                "(for example `pip install \"lerobot[pi]\"`)."
-            ) from exc
+            from lerobot.policies.factory import make_pre_post_processors as current_make_pre_post_processors
+            make_pre_post_processors = current_make_pre_post_processors
+        except ImportError:
+            make_pre_post_processors = None
+        return pi0_policy_cls, make_pre_post_processors
+    except ImportError:
+        pass
 
-    return pi0_policy_cls, make_pre_post_processors
+    try:
+        from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy as legacy_pi0_policy_cls
+        pi0_policy_cls = legacy_pi0_policy_cls
+        try:
+            from lerobot.common.policies.factory import make_pre_post_processors as legacy_make_pre_post_processors
+            make_pre_post_processors = legacy_make_pre_post_processors
+        except ImportError:
+            make_pre_post_processors = None
+        return pi0_policy_cls, make_pre_post_processors
+    except ImportError as exc:
+        raise ImportError(
+            "Could not import `PI0Policy`. Install a LeRobot version that includes PI0 support."
+        ) from exc
