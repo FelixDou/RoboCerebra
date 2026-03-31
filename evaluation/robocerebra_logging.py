@@ -130,11 +130,32 @@ def save_rollout_video(
     suite_prefix = f"{task_suite.replace(' ', '_')}--" if task_suite else ""
     video_name = f"{DATE_TIME}--{suite_prefix}episode={idx}--success={int(success)}--task={processed_task_description}.mp4"
     mp4_path = rollout_dir / video_name
-    
-    video_writer = imageio.get_writer(mp4_path, fps=30)
-    for img in rollout_images:
-        video_writer.append_data(img)
-    video_writer.close()
+
+    writer_candidates = [
+        {"format": "FFMPEG", "codec": "libx264", "fps": 30, "pixelformat": "yuv420p", "macro_block_size": None},
+        {"format": "FFMPEG", "codec": "mpeg4", "fps": 30, "macro_block_size": None},
+        {"fps": 30},
+    ]
+
+    last_error = None
+    for writer_kwargs in writer_candidates:
+        video_writer = None
+        try:
+            video_writer = imageio.get_writer(str(mp4_path), **writer_kwargs)
+            for img in rollout_images:
+                video_writer.append_data(img)
+            video_writer.close()
+            break
+        except Exception as exc:
+            last_error = exc
+            if video_writer is not None:
+                try:
+                    video_writer.close()
+                except Exception:
+                    pass
+    else:
+        raise RuntimeError(f"Failed to write rollout video to {mp4_path}: {last_error}") from last_error
+
     print(f"Saved rollout MP4 at path {mp4_path}")
     if log_file is not None:
         log_file.write(f"Saved rollout MP4 at path {mp4_path}\n")
