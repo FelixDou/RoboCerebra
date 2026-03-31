@@ -253,7 +253,7 @@ def _get_feature_shape(feature_spec: Any) -> Optional[tuple[int, ...]]:
 
 
 def _image_to_tensor(image: np.ndarray) -> torch.Tensor:
-    image_array = np.asarray(image)
+    image_array = np.ascontiguousarray(image)
     if image_array.ndim != 3 or image_array.shape[-1] != 3:
         raise ValueError(f"Expected image shape (H, W, 3), got {image_array.shape}")
     return torch.from_numpy(image_array).permute(2, 0, 1).contiguous()
