@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import imageio
+import numpy as np
 import wandb
 
 from config import GenerateConfig
@@ -131,6 +132,37 @@ def save_rollout_video(
     video_name = f"{DATE_TIME}--{suite_prefix}episode={idx}--success={int(success)}--task={processed_task_description}.mp4"
     mp4_path = rollout_dir / video_name
 
+    normalized_images = [np.ascontiguousarray(np.asarray(img, dtype=np.uint8)) for img in rollout_images]
+    if not normalized_images:
+        raise RuntimeError(f"No frames available to write rollout video to {mp4_path}")
+
+    ffmpeg_error = None
+    try:
+        import imageio_ffmpeg
+
+        first_frame = normalized_images[0]
+        height, width = first_frame.shape[:2]
+        ffmpeg_writer = imageio_ffmpeg.write_frames(
+            str(mp4_path),
+            (width, height),
+            fps=30,
+            codec="libx264",
+            pix_fmt_in="rgb24",
+            pix_fmt_out="yuv420p",
+            macro_block_size=1,
+            ffmpeg_log_level="error",
+        )
+        ffmpeg_writer.send(None)
+        for img in normalized_images:
+            ffmpeg_writer.send(img)
+        ffmpeg_writer.close()
+        print(f"Saved rollout MP4 at path {mp4_path}")
+        if log_file is not None:
+            log_file.write(f"Saved rollout MP4 at path {mp4_path}\n")
+        return str(mp4_path)
+    except Exception as exc:
+        ffmpeg_error = exc
+
     writer_candidates = [
         {"format": "FFMPEG", "codec": "libx264", "fps": 30, "pixelformat": "yuv420p", "macro_block_size": None},
         {"format": "FFMPEG", "codec": "mpeg4", "fps": 30, "macro_block_size": None},
@@ -142,7 +174,7 @@ def save_rollout_video(
         video_writer = None
         try:
             video_writer = imageio.get_writer(str(mp4_path), **writer_kwargs)
-            for img in rollout_images:
+            for img in normalized_images:
                 video_writer.append_data(img)
             video_writer.close()
             break
@@ -154,6 +186,10 @@ def save_rollout_video(
                 except Exception:
                     pass
     else:
+        if ffmpeg_error is not None:
+            raise RuntimeError(
+                f"Failed to write rollout video to {mp4_path}: ffmpeg writer error={ffmpeg_error}; imageio fallback error={last_error}"
+            ) from last_error
         raise RuntimeError(f"Failed to write rollout video to {mp4_path}: {last_error}") from last_error
 
     print(f"Saved rollout MP4 at path {mp4_path}")
