@@ -355,21 +355,40 @@ def _patch_pi0_image_feature_api(policy: Any) -> None:
     pi0_model = getattr(policy, "model", None)
     paligemma_with_expert = getattr(pi0_model, "paligemma_with_expert", None)
     paligemma = getattr(paligemma_with_expert, "paligemma", None)
+    nested_paligemma_model = getattr(paligemma, "model", None)
 
-    if paligemma is None or not hasattr(paligemma, "get_image_features"):
+    if paligemma is None:
         return
     if getattr(paligemma, "_robocerebra_image_feature_api_patched", False):
         return
 
-    original_get_image_features = paligemma.get_image_features
+    def wrap_image_feature_method(owner: Any, method_name: str) -> None:
+        if owner is None or not hasattr(owner, method_name):
+            return
+        original_method = getattr(owner, method_name)
 
-    def wrapped_get_image_features(*args, **kwargs):
-        outputs = original_get_image_features(*args, **kwargs)
-        if hasattr(outputs, "pooler_output"):
+        def wrapped_method(*args, **kwargs):
+            outputs = original_method(*args, **kwargs)
+            if hasattr(outputs, "pooler_output"):
+                return outputs
+            return SimpleNamespace(pooler_output=outputs)
+
+        setattr(owner, method_name, wrapped_method)
+
+    wrap_image_feature_method(paligemma, "get_image_features")
+    wrap_image_feature_method(nested_paligemma_model, "get_image_features")
+
+    if paligemma_with_expert is not None and hasattr(paligemma_with_expert, "embed_image"):
+        original_embed_image = paligemma_with_expert.embed_image
+
+        def wrapped_embed_image(*args, **kwargs):
+            outputs = original_embed_image(*args, **kwargs)
+            if hasattr(outputs, "pooler_output"):
+                return outputs.pooler_output
             return outputs
-        return SimpleNamespace(pooler_output=outputs)
 
-    paligemma.get_image_features = wrapped_get_image_features
+        paligemma_with_expert.embed_image = wrapped_embed_image
+
     paligemma._robocerebra_image_feature_api_patched = True
 
 
