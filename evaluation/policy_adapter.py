@@ -14,6 +14,7 @@ implementation. It currently supports:
 from __future__ import annotations
 
 import random
+from types import SimpleNamespace
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -132,6 +133,7 @@ def _initialize_pi0_policy(cfg) -> PolicyRuntime:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = pi0_policy_cls.from_pretrained(str(cfg.pretrained_checkpoint))
+    _patch_pi0_image_feature_api(model)
     model = model.to(device)
     model.eval()
 
@@ -346,6 +348,29 @@ def _extract_pi0_input_features(policy_cfg: Any) -> Dict[str, Any]:
         if features:
             return dict(features)
     return {}
+
+
+def _patch_pi0_image_feature_api(policy: Any) -> None:
+    """Normalize PaliGemma image-feature return types across Transformers versions."""
+    pi0_model = getattr(policy, "model", None)
+    paligemma_with_expert = getattr(pi0_model, "paligemma_with_expert", None)
+    paligemma = getattr(paligemma_with_expert, "paligemma", None)
+
+    if paligemma is None or not hasattr(paligemma, "get_image_features"):
+        return
+    if getattr(paligemma, "_robocerebra_image_feature_api_patched", False):
+        return
+
+    original_get_image_features = paligemma.get_image_features
+
+    def wrapped_get_image_features(*args, **kwargs):
+        outputs = original_get_image_features(*args, **kwargs)
+        if hasattr(outputs, "pooler_output"):
+            return outputs
+        return SimpleNamespace(pooler_output=outputs)
+
+    paligemma.get_image_features = wrapped_get_image_features
+    paligemma._robocerebra_image_feature_api_patched = True
 
 
 def _import_pi0_components():
