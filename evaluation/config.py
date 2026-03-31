@@ -17,7 +17,7 @@ class TaskSuite(str, Enum):
     ROBOCEREBRA = "robocerebra"
 
 
-SUPPORTED_MODEL_FAMILIES = {"openvla", "pi0"}
+SUPPORTED_MODEL_FAMILIES = {"openvla", "pi0", "pi05"}
 
 
 TASK_MAX_STEPS: Dict[str, int] = {
@@ -121,7 +121,19 @@ def validate_config(cfg: GenerateConfig) -> None:
         )
     checkpoint_str = str(cfg.pretrained_checkpoint).lower()
     looks_like_pi0 = bool(re.search(r"(^|[\\/_-])pi0([\\/_-]|$)", checkpoint_str)) or "lerobot/pi0" in checkpoint_str
-    if cfg.model_family == "openvla" and looks_like_pi0:
+    looks_like_pi05 = bool(re.search(r"(^|[\\/_-])pi05([\\/_-]|$)", checkpoint_str)) or "lerobot/pi05" in checkpoint_str
+    if cfg.model_family == "openvla" and (looks_like_pi0 or looks_like_pi05):
+        suggested_family = "pi05" if looks_like_pi05 else "pi0"
+        raise ValueError(
+            f"The configured checkpoint looks like a LeRobot {suggested_family.upper()} checkpoint. "
+            f"Run with `--model_family {suggested_family}`."
+        )
+    if cfg.model_family == "pi0" and looks_like_pi05:
+        raise ValueError(
+            "The configured checkpoint looks like a LeRobot PI05 checkpoint. "
+            "Run with `--model_family pi05`."
+        )
+    if cfg.model_family == "pi05" and looks_like_pi0:
         raise ValueError(
             "The configured checkpoint looks like a LeRobot PI0 checkpoint. "
             "Run with `--model_family pi0`."

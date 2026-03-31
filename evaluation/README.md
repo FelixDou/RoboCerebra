@@ -1,6 +1,6 @@
 # RoboCerebra VLA Evaluation Suite
 
-Evaluation tool for OpenVLA-OFT and LeRobot PI0-style models on the RoboCerebra benchmark.
+Evaluation tool for OpenVLA-OFT and LeRobot PI0/PI05-style models on the RoboCerebra benchmark.
 
 ## Setup
 
@@ -82,6 +82,12 @@ python eval_openvla.py \
   --pretrained_checkpoint "lerobot/pi0_libero_finetuned_v044" \
   --task_types ["Ideal"]
 
+# Evaluate a LeRobot PI05 checkpoint
+python eval_openvla.py \
+  --model_family pi05 \
+  --pretrained_checkpoint "lerobot/pi05_libero_finetuned_v044" \
+  --task_types ["Ideal"]
+
 # Use specific task description suffix
 python eval_openvla.py \
   --task_types ["Random_Disturbance"] \
@@ -97,7 +103,7 @@ python eval_openvla.py \
 
 ### Model Configuration
 - `--pretrained_checkpoint`: Model checkpoint path
-- `--model_family`: Model type (`"openvla"` or `"pi0"`)
+- `--model_family`: Model type (`"openvla"`, `"pi0"`, or `"pi05"`)
 - `--use_l1_regression`: Use L1 regression head (default: True)
 - `--use_proprio`: Whether to use proprioceptive information (default: True)
 - `--center_crop`: Image center cropping (default: True)

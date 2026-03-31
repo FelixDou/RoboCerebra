@@ -61,7 +61,7 @@ pip install -e .
 
 ### Option 2: VLA Evaluation
 
-For evaluation using OpenVLA or LeRobot PI0:
+For evaluation using OpenVLA or LeRobot PI0/PI05:
 
 ```bash
 # Create and activate conda environment
@@ -123,6 +123,12 @@ python eval_openvla.py --task_types ["Ideal", "Random_Disturbance"]
 python eval_openvla.py \
   --model_family pi0 \
   --pretrained_checkpoint "lerobot/pi0_libero_finetuned_v044" \
+  --task_types ["Ideal"]
+
+# Example: evaluate a LeRobot PI05 checkpoint
+python eval_openvla.py \
+  --model_family pi05 \
+  --pretrained_checkpoint "lerobot/pi05_libero_finetuned_v044" \
   --task_types ["Ideal"]
 ```
 

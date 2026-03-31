@@ -8,7 +8,7 @@ Policy-family adapters for RoboCerebra evaluation.
 This module keeps the main evaluation loop agnostic to the underlying policy
 implementation. It currently supports:
   - OpenVLA / OpenVLA-OFT style checkpoints
-  - LeRobot PI0 style checkpoints
+  - LeRobot PI0 / PI05 style checkpoints
 """
 
 from __future__ import annotations
@@ -52,6 +52,8 @@ def canonicalize_model_family(model_family: str) -> str:
         return "openvla"
     if normalized in {"pi-zero", "pi_zero"}:
         return "pi0"
+    if normalized in {"pi-05", "pi_05", "pi-0.5", "pi_0.5", "pi-zero-five", "pi_zero_five"}:
+        return "pi05"
     return normalized
 
 
@@ -72,7 +74,9 @@ def initialize_policy(cfg) -> PolicyRuntime:
     if cfg.model_family == "openvla":
         return _initialize_openvla_policy(cfg)
     if cfg.model_family == "pi0":
-        return _initialize_pi0_policy(cfg)
+        return _initialize_lerobot_policy(cfg, policy_family="pi0")
+    if cfg.model_family == "pi05":
+        return _initialize_lerobot_policy(cfg, policy_family="pi05")
 
     raise ValueError(f"Unsupported model family: {cfg.model_family}")
 
@@ -88,8 +92,8 @@ def predict_policy_actions(cfg, policy_runtime: PolicyRuntime, observation: Dict
     """Predict one or more actions for the current observation."""
     if policy_runtime.model_family == "openvla":
         return _predict_openvla_actions(cfg, policy_runtime, observation, desc)
-    if policy_runtime.model_family == "pi0":
-        return _predict_pi0_actions(policy_runtime, observation, desc)
+    if policy_runtime.model_family in {"pi0", "pi05"}:
+        return _predict_lerobot_actions(policy_runtime, observation, desc)
 
     raise ValueError(f"Unsupported model family: {policy_runtime.model_family}")
 
@@ -130,19 +134,19 @@ def _initialize_openvla_policy(cfg) -> PolicyRuntime:
     )
 
 
-def _initialize_pi0_policy(cfg) -> PolicyRuntime:
-    pi0_policy_cls, make_pre_post_processors = _import_pi0_components()
+def _initialize_lerobot_policy(cfg, policy_family: str) -> PolicyRuntime:
+    policy_cls, make_pre_post_processors = _import_lerobot_components(policy_family)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    _patch_pi0_causal_mask_api()
-    model = pi0_policy_cls.from_pretrained(str(cfg.pretrained_checkpoint))
-    _patch_pi0_image_feature_api(model)
+    _patch_lerobot_causal_mask_api()
+    model = policy_cls.from_pretrained(str(cfg.pretrained_checkpoint))
+    _patch_lerobot_image_feature_api(model)
     model = model.to(device)
     model.eval()
 
     policy_cfg = getattr(model, "config", None)
     if policy_cfg is None:
-        raise ValueError("Loaded PI0 policy does not expose a `.config` attribute.")
+        raise ValueError(f"Loaded {policy_family.upper()} policy does not expose a `.config` attribute.")
 
     preprocessor, postprocessor = None, None
     if make_pre_post_processors is not None:
@@ -156,10 +160,10 @@ def _initialize_pi0_policy(cfg) -> PolicyRuntime:
         if hasattr(postprocessor, "eval"):
             postprocessor.eval()
 
-    input_features = _extract_pi0_input_features(policy_cfg)
+    input_features = _extract_lerobot_input_features(policy_cfg)
 
     return PolicyRuntime(
-        model_family="pi0",
+        model_family=policy_family,
         model=model,
         resize_size=None,
         preprocessor=preprocessor,
@@ -186,8 +190,8 @@ def _predict_openvla_actions(cfg, policy_runtime: PolicyRuntime, observation: Di
     )
 
 
-def _predict_pi0_actions(policy_runtime: PolicyRuntime, observation: Dict[str, Any], desc: str) -> List[np.ndarray]:
-    batch = _build_pi0_batch(policy_runtime, observation, desc)
+def _predict_lerobot_actions(policy_runtime: PolicyRuntime, observation: Dict[str, Any], desc: str) -> List[np.ndarray]:
+    batch = _build_lerobot_batch(policy_runtime, observation, desc)
 
     if policy_runtime.preprocessor is not None:
         batch = policy_runtime.preprocessor(batch)
@@ -204,7 +208,7 @@ def _predict_pi0_actions(policy_runtime: PolicyRuntime, observation: Dict[str, A
     return _to_action_sequence(actions)
 
 
-def _build_pi0_batch(policy_runtime: PolicyRuntime, observation: Dict[str, Any], desc: str) -> Dict[str, Any]:
+def _build_lerobot_batch(policy_runtime: PolicyRuntime, observation: Dict[str, Any], desc: str) -> Dict[str, Any]:
     full_image = _image_to_tensor(observation["full_image"])
     wrist_image = _image_to_tensor(observation.get("wrist_image", observation["full_image"]))
     state = torch.as_tensor(observation["state"], dtype=torch.float32)
@@ -334,7 +338,7 @@ def _to_action_sequence(actions: Any) -> List[np.ndarray]:
     if action_array.ndim == 2:
         return [np.asarray(step, dtype=np.float32) for step in action_array]
 
-    raise ValueError(f"Unsupported PI0 action shape: {action_array.shape}")
+    raise ValueError(f"Unsupported LeRobot action shape: {action_array.shape}")
 
 
 def _to_numpy_action(action: Any) -> np.ndarray:
@@ -344,7 +348,7 @@ def _to_numpy_action(action: Any) -> np.ndarray:
     return np.squeeze(action)
 
 
-def _extract_pi0_input_features(policy_cfg: Any) -> Dict[str, Any]:
+def _extract_lerobot_input_features(policy_cfg: Any) -> Dict[str, Any]:
     """Read input-feature metadata across LeRobot API revisions."""
     for attr_name in ("input_features", "observation_features", "input_shapes"):
         features = getattr(policy_cfg, attr_name, None)
@@ -353,10 +357,10 @@ def _extract_pi0_input_features(policy_cfg: Any) -> Dict[str, Any]:
     return {}
 
 
-def _patch_pi0_image_feature_api(policy: Any) -> None:
+def _patch_lerobot_image_feature_api(policy: Any) -> None:
     """Normalize PaliGemma image-feature return types across Transformers versions."""
-    pi0_model = getattr(policy, "model", None)
-    paligemma_with_expert = getattr(pi0_model, "paligemma_with_expert", None)
+    lerobot_model = getattr(policy, "model", None)
+    paligemma_with_expert = getattr(lerobot_model, "paligemma_with_expert", None)
     paligemma = getattr(paligemma_with_expert, "paligemma", None)
     nested_paligemma_model = getattr(paligemma, "model", None)
 
@@ -395,7 +399,7 @@ def _patch_pi0_image_feature_api(policy: Any) -> None:
     paligemma._robocerebra_image_feature_api_patched = True
 
 
-def _patch_pi0_causal_mask_api() -> None:
+def _patch_lerobot_causal_mask_api() -> None:
     """Normalize create_causal_mask kwargs across Transformers revisions."""
     try:
         import transformers.masking_utils as masking_utils
@@ -424,31 +428,38 @@ def _patch_pi0_causal_mask_api() -> None:
             module.create_causal_mask = wrapped_create_causal_mask
 
 
-def _import_pi0_components():
+def _import_lerobot_components(policy_family: str):
     make_pre_post_processors = None
+    class_name = policy_family.upper() + "Policy"
 
     try:
-        from lerobot.policies.pi0.modeling_pi0 import PI0Policy as current_pi0_policy_cls
-        pi0_policy_cls = current_pi0_policy_cls
+        current_module = __import__(
+            f"lerobot.policies.{policy_family}.modeling_{policy_family}",
+            fromlist=[class_name],
+        )
+        policy_cls = getattr(current_module, class_name)
         try:
             from lerobot.policies.factory import make_pre_post_processors as current_make_pre_post_processors
             make_pre_post_processors = current_make_pre_post_processors
         except ImportError:
             make_pre_post_processors = None
-        return pi0_policy_cls, make_pre_post_processors
+        return policy_cls, make_pre_post_processors
     except ImportError:
         pass
 
     try:
-        from lerobot.common.policies.pi0.modeling_pi0 import PI0Policy as legacy_pi0_policy_cls
-        pi0_policy_cls = legacy_pi0_policy_cls
+        legacy_module = __import__(
+            f"lerobot.common.policies.{policy_family}.modeling_{policy_family}",
+            fromlist=[class_name],
+        )
+        policy_cls = getattr(legacy_module, class_name)
         try:
             from lerobot.common.policies.factory import make_pre_post_processors as legacy_make_pre_post_processors
             make_pre_post_processors = legacy_make_pre_post_processors
         except ImportError:
             make_pre_post_processors = None
-        return pi0_policy_cls, make_pre_post_processors
+        return policy_cls, make_pre_post_processors
     except ImportError as exc:
         raise ImportError(
-            "Could not import `PI0Policy`. Install a LeRobot version that includes PI0 support."
+            f"Could not import `{class_name}`. Install a LeRobot version that includes {policy_family.upper()} support."
         ) from exc

@@ -335,7 +335,7 @@ def process_action(action, model_family):
         action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
         return action
-    if model_family == "pi0":
+    if model_family in {"pi0", "pi05"}:
         return action
     raise ValueError(f"Unsupported model family: {model_family}")
 
