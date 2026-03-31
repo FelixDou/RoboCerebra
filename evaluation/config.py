@@ -9,11 +9,15 @@ Configuration classes and constants for RoboCerebra evaluation.
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import re
 from typing import Dict, List, Optional, Union
 
 
 class TaskSuite(str, Enum):
     ROBOCEREBRA = "robocerebra"
+
+
+SUPPORTED_MODEL_FAMILIES = {"openvla", "pi0"}
 
 
 TASK_MAX_STEPS: Dict[str, int] = {
@@ -109,8 +113,20 @@ class GenerateConfig:
 
 
 def validate_config(cfg: GenerateConfig) -> None:
+    cfg.model_family = str(cfg.model_family).strip().lower()
     assert cfg.pretrained_checkpoint, "pretrained_checkpoint must not be None!"
-    if "image_aug" in str(cfg.pretrained_checkpoint):
+    if cfg.model_family not in SUPPORTED_MODEL_FAMILIES:
+        raise ValueError(
+            f"Unsupported model_family `{cfg.model_family}`. Supported families: {sorted(SUPPORTED_MODEL_FAMILIES)}"
+        )
+    checkpoint_str = str(cfg.pretrained_checkpoint).lower()
+    looks_like_pi0 = bool(re.search(r"(^|[\\/_-])pi0([\\/_-]|$)", checkpoint_str)) or "lerobot/pi0" in checkpoint_str
+    if cfg.model_family == "openvla" and looks_like_pi0:
+        raise ValueError(
+            "The configured checkpoint looks like a LeRobot PI0 checkpoint. "
+            "Run with `--model_family pi0`."
+        )
+    if cfg.model_family == "openvla" and "image_aug" in checkpoint_str:
         assert cfg.center_crop, "Expecting center_crop=True because model was trained with image augmentations!"
     assert not (cfg.load_in_8bit and cfg.load_in_4bit), "Cannot use both 8‑bit and 4‑bit quantization!"
     if cfg.dynamic:

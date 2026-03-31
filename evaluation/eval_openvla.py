@@ -3,7 +3,7 @@
 """
 run_robocerebra_eval.py
 
-Main evaluation script for RoboCerebra tasks using OpenVLA.
+Main evaluation script for RoboCerebra tasks using supported VLA policies.
 """
 
 import logging
@@ -39,22 +39,9 @@ from episode import (
     update_completion_tracking,
     finalize_episode
 )
-from utils import get_task_directories
+from policy_adapter import initialize_policy, reset_policy_state, set_seed_everywhere
+from utils import get_libero_dummy_action, get_task_directories
 from resume import create_step_based_resume_handler
-
-# Import OpenVLA and robot utilities
-from experiments.robot.libero.libero_utils import get_libero_dummy_action
-from experiments.robot.openvla_utils import (
-    get_action_head,
-    get_noisy_action_projector,
-    get_processor,
-    get_proprio_projector,
-)
-from experiments.robot.robot_utils import (
-    get_image_resize_size,
-    get_model,
-    set_seed_everywhere,
-)
 
 # --------------------------------------------------------------------------------------------------
 # Logging
@@ -72,23 +59,8 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------------------------------
 
 def initialize_model(cfg: GenerateConfig):
-    """Initialize OpenVLA model and related components."""
-    model = get_model(cfg)
-    proprio_projector = get_proprio_projector(cfg, model.llm_dim, proprio_dim=8) if cfg.use_proprio else None
-    action_head = get_action_head(cfg, model.llm_dim) if (cfg.use_l1_regression or cfg.use_diffusion) else None
-    noisy_action_projector = (
-        get_noisy_action_projector(cfg, model.llm_dim) if cfg.use_diffusion else None
-    )
-    processor = get_processor(cfg) if cfg.model_family == "openvla" else None
-    
-    # unnorm key check
-    unnorm_key = cfg.task_suite_name
-    if unnorm_key not in model.norm_stats and f"{unnorm_key}_no_noops" in model.norm_stats:
-        unnorm_key = f"{unnorm_key}_no_noops"
-    assert unnorm_key in model.norm_stats, f"Action un‑norm key {unnorm_key} not found!"
-    cfg.unnorm_key = unnorm_key
-    
-    return model, action_head, proprio_projector, noisy_action_projector, processor
+    """Initialize the configured policy runtime."""
+    return initialize_policy(cfg)
 
 # --------------------------------------------------------------------------------------------------
 # Simplified Episode and Task Functions
@@ -100,13 +72,9 @@ def run_episode(
     naming_step_desc: Sequence[str],
     model_step_desc: Sequence[str],
     step_states: Sequence[np.ndarray] | None,
-    model,
+    policy_runtime,
     goal: Any,
     resize_size,
-    processor=None,
-    action_head=None,
-    proprio_projector=None,
-    noisy_action_projector=None,
     log_file=None,
     episode_idx: int = 0,
     distractor_info: Optional[Dict[str, Any]] = None,
@@ -148,6 +116,8 @@ def run_episode(
     max_steps = cfg.switch_steps * segment_count
     prev_step_idx = 0
 
+    reset_policy_state(policy_runtime)
+
     # Initial completion baseline
     if not wait_flag:
         comp_start_dict, total_completed_prev, _ = env._check_success(goal)
@@ -185,6 +155,8 @@ def run_episode(
             episode_stats['skip_increment'] = skip_increment
             if new_trigger is not None:
                 resume_trigger_step = t
+            action_queue.clear()
+            reset_policy_state(policy_runtime)
 
         prev_step_idx = step_idx
 
@@ -208,10 +180,9 @@ def run_episode(
             desc = full_description if cfg.complete_description else model_step_desc[step_idx]
 
         raw_action = execute_policy_step(
-            cfg, model, observation, desc, action_queue, processor, 
-            action_head, proprio_projector, noisy_action_projector
+            cfg, policy_runtime, observation, desc, action_queue
         )
-        
+
         obs, _, _, _ = env.step(process_action(raw_action, cfg.model_family).tolist())
         t += 1
 
@@ -238,12 +209,8 @@ def run_task(
     cfg: GenerateConfig,
     task_type: str,
     task_dir: Path,
-    model,
+    policy_runtime,
     resize_size,
-    processor=None,
-    action_head=None,
-    proprio_projector=None,
-    noisy_action_projector=None,
     log_file=None,
 ) -> Tuple[int, int, int, int, Dict]:
     """Evaluate a single task directory."""
@@ -329,8 +296,8 @@ def run_task(
                 initial_state = initial_states[ep_idx % len(initial_states)]
 
         succ, ep_subtasks, ep_goals = run_episode(
-            cfg, env, naming_step_desc, model_step_desc, step_states, model, goal, resize_size,
-            processor, action_head, proprio_projector, noisy_action_projector, log_file,
+            cfg, env, naming_step_desc, model_step_desc, step_states, policy_runtime, goal, resize_size,
+            log_file,
             episode_idx=ep_idx, distractor_info=distractor_info, task_line=task_line,
             task_name=task_dir.name, wait_flag=wait_flag, task_type=task_type,
             case_name=task_dir.name, initial_state=initial_state, resume_handler=resume_handler,
@@ -378,11 +345,13 @@ def eval_robocerebra(cfg: GenerateConfig) -> float:
     """Main evaluation function."""
     validate_config(cfg)
     set_seed_everywhere(cfg.seed)
-    model, action_head, proprio_projector, noisy_action_projector, processor = initialize_model(cfg)
-    resize_size = get_image_resize_size(cfg)
+    policy_runtime = initialize_model(cfg)
+    resize_size = policy_runtime.resize_size
     log_file, _, run_id, results_log_filepath = setup_logging(cfg)
     
     log_message(f"Starting RoboCerebra evaluation", log_file)
+    log_message(f"Model family: {cfg.model_family}", log_file)
+    log_message(f"Checkpoint: {cfg.pretrained_checkpoint}", log_file)
     log_message(f"RoboCerebra root: {cfg.robocerebra_root}", log_file)
     log_message(f"Init files root: {cfg.init_files_root}", log_file)
     log_message(f"Use init files: {cfg.use_init_files}", log_file)
@@ -445,8 +414,7 @@ def eval_robocerebra(cfg: GenerateConfig) -> float:
         
         for _, task_dir in task_type_dirs:
             eps, succ, subtasks, possible, task_result = run_task(
-                cfg, task_type, task_dir, model, resize_size, processor,
-                action_head, proprio_projector, noisy_action_projector, log_file,
+                cfg, task_type, task_dir, policy_runtime, resize_size, log_file,
             )
             
             all_task_results.append(task_result)

@@ -9,6 +9,7 @@ environment handling, and task processing.
 
 import json
 import logging
+import math
 import os
 import pickle
 import re
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple, Any
 
 import numpy as np
+from PIL import Image
 from robosuite import load_controller_config
 
 LIBERO_SRC_ROOT = Path(__file__).resolve().parents[1] / "LIBERO"
@@ -27,19 +29,71 @@ import libero.libero.envs.bddl_utils as BDDLUtils
 from libero.libero.envs import *  # noqa: F403
 
 from config import GenerateConfig, SCENE_MAPPINGS, MOVABLE_OBJECT_LIST
-from experiments.robot.libero.libero_utils import (
-    get_libero_image,
-    get_libero_wrist_image,
-    quat2axisangle,
-)
-from experiments.robot.openvla_utils import resize_image_for_policy
-from experiments.robot.robot_utils import (
-    invert_gripper_action,
-    normalize_gripper_action,
-)
 
 
 logger = logging.getLogger(__name__)
+
+
+def resize_image_for_policy(image: np.ndarray, resize_size: int | tuple[int, int]) -> np.ndarray:
+    """Resize images for policy input.
+
+    When OpenVLA utilities are available we reuse their original implementation to
+    preserve behavior. Otherwise we fall back to a simple PIL resize so non-OpenVLA
+    policies can still run without importing the external `experiments` package.
+    """
+    try:
+        from experiments.robot.openvla_utils import resize_image_for_policy as openvla_resize_image
+        return openvla_resize_image(image, resize_size)
+    except ModuleNotFoundError:
+        pass
+
+    if isinstance(resize_size, int):
+        target_size = (resize_size, resize_size)
+    else:
+        target_size = (int(resize_size[1]), int(resize_size[0]))
+
+    return np.asarray(Image.fromarray(image).resize(target_size, Image.BILINEAR), dtype=np.uint8)
+
+
+def normalize_gripper_action(action: np.ndarray, binarize: bool = True) -> np.ndarray:
+    """Normalize gripper action from [0, 1] to [-1, +1]."""
+    normalized_action = action.copy()
+    normalized_action[..., -1] = 2 * normalized_action[..., -1] - 1
+    if binarize:
+        normalized_action[..., -1] = np.sign(normalized_action[..., -1])
+    return normalized_action
+
+
+def invert_gripper_action(action: np.ndarray) -> np.ndarray:
+    """Flip the sign of the final gripper-action dimension."""
+    inverted_action = action.copy()
+    inverted_action[..., -1] *= -1.0
+    return inverted_action
+
+
+def get_libero_dummy_action(model_family: str) -> List[float]:
+    """Return a no-op action used during the initial waiting period."""
+    return [0, 0, 0, 0, 0, 0, -1]
+
+
+def get_libero_image(obs: Dict[str, Any]) -> np.ndarray:
+    """Extract the third-person LIBERO image and align it with training convention."""
+    return obs["agentview_image"][::-1, ::-1]
+
+
+def get_libero_wrist_image(obs: Dict[str, Any]) -> np.ndarray:
+    """Extract the wrist-camera LIBERO image and align it with training convention."""
+    return obs["robot0_eye_in_hand_image"][::-1, ::-1]
+
+
+def quat2axisangle(quat: np.ndarray) -> np.ndarray:
+    """Convert a quaternion to axis-angle coordinates."""
+    quat = np.asarray(quat, dtype=np.float32).copy()
+    quat[3] = np.clip(quat[3], -1.0, 1.0)
+    den = np.sqrt(1.0 - quat[3] * quat[3])
+    if math.isclose(float(den), 0.0):
+        return np.zeros(3, dtype=np.float32)
+    return (quat[:3] * 2.0 * math.acos(float(quat[3]))) / den
 
 
 def load_actions(json_path: str) -> Dict[str, List[List[str]]]:
@@ -260,11 +314,11 @@ def load_environment(task_dir: Path):
         return None, None, None
 
 
-def prepare_observation(obs, resize_size):
+def prepare_observation(obs, resize_size=None):
     img = get_libero_image(obs)
     wrist_img = get_libero_wrist_image(obs)
-    img_resized = resize_image_for_policy(img, resize_size)
-    wrist_img_resized = resize_image_for_policy(wrist_img, resize_size)
+    img_resized = resize_image_for_policy(img, resize_size) if resize_size is not None else img
+    wrist_img_resized = resize_image_for_policy(wrist_img, resize_size) if resize_size is not None else wrist_img
     observation = {
         "full_image": img_resized,
         "wrist_image": wrist_img_resized,
@@ -276,10 +330,14 @@ def prepare_observation(obs, resize_size):
 
 
 def process_action(action, model_family):
-    action = normalize_gripper_action(action, binarize=True)
+    action = np.asarray(action, dtype=np.float32)
     if model_family == "openvla":
+        action = normalize_gripper_action(action, binarize=True)
         action = invert_gripper_action(action)
-    return action
+        return action
+    if model_family == "pi0":
+        return action
+    raise ValueError(f"Unsupported model family: {model_family}")
 
 
 # ★★ Find the address (addr) of an object's y-axis in qpos ★★

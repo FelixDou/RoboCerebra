@@ -59,9 +59,9 @@ pip install torch==1.11.0+cu113 torchvision==0.12.0+cu113 torchaudio==0.11.0 --e
 pip install -e .
 ```
 
-### Option 2: OpenVLA Evaluation
+### Option 2: VLA Evaluation
 
-For evaluation using OpenVLA:
+For evaluation using OpenVLA or LeRobot PI0:
 
 ```bash
 # Create and activate conda environment
@@ -113,11 +113,17 @@ pip install "peft>=0.17.0"
 
 ### Model Evaluation
 
-Evaluate OpenVLA-OFT on RoboCerebra benchmark:
+Evaluate a VLA policy on RoboCerebra benchmark:
 
 ```bash
 cd evaluation/
 python eval_openvla.py --task_types ["Ideal", "Random_Disturbance"]
+
+# Example: evaluate a LeRobot PI0 checkpoint
+python eval_openvla.py \
+  --model_family pi0 \
+  --pretrained_checkpoint "lerobot/pi0_libero_finetuned_v044" \
+  --task_types ["Ideal"]
 ```
 
 ### Dataset Conversion

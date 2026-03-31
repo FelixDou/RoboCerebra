@@ -1,6 +1,6 @@
-# RoboCerebra OpenVLA Evaluation Suite
+# RoboCerebra VLA Evaluation Suite
 
-Evaluation tool for OpenVLA-OFT model on RoboCerebra benchmark, designed with modular architecture.
+Evaluation tool for OpenVLA-OFT and LeRobot PI0-style models on the RoboCerebra benchmark.
 
 ## Setup
 
@@ -20,7 +20,7 @@ huggingface-cli download qiukingballball/RoboCerebraBench --local-dir ./RoboCere
 
 **Important**: Before running evaluation, configure the following placeholders in `config.py`:
 
-- `<PRETRAINED_CHECKPOINT_PATH>` → Your OpenVLA-OFT model checkpoint path
+- `<PRETRAINED_CHECKPOINT_PATH>` → Your model checkpoint path
 - `<ROBOCEREBRA_BENCH_PATH>` → RoboCerebra benchmark dataset root directory (e.g., `./RoboCerebra_Bench`)
 
 Example:
@@ -76,6 +76,12 @@ python eval_openvla.py \
   --pretrained_checkpoint "/path/to/openvla-oft/checkpoint" \
   --task_types ["Ideal"]
 
+# Evaluate a LeRobot PI0 checkpoint
+python eval_openvla.py \
+  --model_family pi0 \
+  --pretrained_checkpoint "lerobot/pi0_libero_finetuned_v044" \
+  --task_types ["Ideal"]
+
 # Use specific task description suffix
 python eval_openvla.py \
   --task_types ["Random_Disturbance"] \
@@ -89,9 +95,9 @@ python eval_openvla.py \
 - `--init_files_root`: Initial state files directory (default: `<ROBOCEREBRA_BENCH_PATH>/init_files`)
 - `--num_trials_per_task`: Number of trials per task (default: 5)
 
-### OpenVLA-OFT Model Configuration
-- `--pretrained_checkpoint`: OpenVLA-OFT model checkpoint path
-- `--model_family`: Model type (fixed: "openvla")
+### Model Configuration
+- `--pretrained_checkpoint`: Model checkpoint path
+- `--model_family`: Model type (`"openvla"` or `"pi0"`)
 - `--use_l1_regression`: Use L1 regression head (default: True)
 - `--use_proprio`: Whether to use proprioceptive information (default: True)
 - `--center_crop`: Image center cropping (default: True)

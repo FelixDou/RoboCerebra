@@ -16,11 +16,10 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from config import GenerateConfig, MOVABLE_OBJECT_LIST
+from policy_adapter import PolicyRuntime, predict_policy_actions
 from robocerebra_logging import log_message, save_rollout_video
 from resume import simulate_resume_completion
 from utils import prepare_observation, process_action, _find_obj_y_addr, _load_step_objects
-from experiments.robot.libero.libero_utils import get_libero_dummy_action
-from experiments.robot.robot_utils import get_action
 
 
 logger = logging.getLogger(__name__)
@@ -266,23 +265,20 @@ def handle_segment_transition(cfg: GenerateConfig, env, goal: Any, step_idx: int
     return comp_start_dict, replay_images_seg, seg_increment_accum, just_resumed, episode_stats['skip_increment'], resume_trigger_step
 
 
-def execute_policy_step(cfg: GenerateConfig, model, observation: Dict, desc: str, 
-                       action_queue: deque, processor=None, action_head=None, 
-                       proprio_projector=None, noisy_action_projector=None) -> np.ndarray:
+def execute_policy_step(
+    cfg: GenerateConfig,
+    policy_runtime: PolicyRuntime,
+    observation: Dict,
+    desc: str,
+    action_queue: deque,
+) -> np.ndarray:
     """Execute a single policy inference step and return the action."""
+    if policy_runtime.uses_internal_action_queue:
+        return predict_policy_actions(cfg, policy_runtime, observation, desc)[0]
+
     if not action_queue:
-        actions = get_action(
-            cfg,
-            model,
-            observation,
-            desc,
-            processor,
-            action_head,
-            proprio_projector,
-            noisy_action_projector,
-            use_film=cfg.use_film,
-        )
-        action_queue.extend(actions)
+        action_queue.extend(predict_policy_actions(cfg, policy_runtime, observation, desc))
+
     return action_queue.popleft()
 
 
