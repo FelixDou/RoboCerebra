@@ -13,7 +13,9 @@ implementation. It currently supports:
 
 from __future__ import annotations
 
+import inspect
 import random
+import sys
 from types import SimpleNamespace
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -132,6 +134,7 @@ def _initialize_pi0_policy(cfg) -> PolicyRuntime:
     pi0_policy_cls, make_pre_post_processors = _import_pi0_components()
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    _patch_pi0_causal_mask_api()
     model = pi0_policy_cls.from_pretrained(str(cfg.pretrained_checkpoint))
     _patch_pi0_image_feature_api(model)
     model = model.to(device)
@@ -390,6 +393,35 @@ def _patch_pi0_image_feature_api(policy: Any) -> None:
         paligemma_with_expert.embed_image = wrapped_embed_image
 
     paligemma._robocerebra_image_feature_api_patched = True
+
+
+def _patch_pi0_causal_mask_api() -> None:
+    """Normalize create_causal_mask kwargs across Transformers revisions."""
+    try:
+        import transformers.masking_utils as masking_utils
+    except ImportError:
+        return
+
+    if getattr(masking_utils, "_robocerebra_causal_mask_api_patched", False):
+        return
+
+    original_create_causal_mask = masking_utils.create_causal_mask
+    signature = inspect.signature(original_create_causal_mask)
+    accepted_kwargs = set(signature.parameters)
+
+    def wrapped_create_causal_mask(*args, **kwargs):
+        if "inputs_embeds" in kwargs and "inputs_embeds" not in accepted_kwargs and "input_embeds" in accepted_kwargs:
+            kwargs["input_embeds"] = kwargs.pop("inputs_embeds")
+        filtered_kwargs = {key: value for key, value in kwargs.items() if key in accepted_kwargs}
+        return original_create_causal_mask(*args, **filtered_kwargs)
+
+    masking_utils.create_causal_mask = wrapped_create_causal_mask
+    masking_utils._robocerebra_causal_mask_api_patched = True
+
+    for module_name in ("lerobot.policies.pi_gemma", "lerobot.common.policies.pi_gemma"):
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, "create_causal_mask"):
+            module.create_causal_mask = wrapped_create_causal_mask
 
 
 def _import_pi0_components():
