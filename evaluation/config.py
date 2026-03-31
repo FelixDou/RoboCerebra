@@ -120,8 +120,13 @@ def validate_config(cfg: GenerateConfig) -> None:
             f"Unsupported model_family `{cfg.model_family}`. Supported families: {sorted(SUPPORTED_MODEL_FAMILIES)}"
         )
     checkpoint_str = str(cfg.pretrained_checkpoint).lower()
-    looks_like_pi0 = bool(re.search(r"(^|[\\/_-])pi0([\\/_-]|$)", checkpoint_str)) or "lerobot/pi0" in checkpoint_str
-    looks_like_pi05 = bool(re.search(r"(^|[\\/_-])pi05([\\/_-]|$)", checkpoint_str)) or "lerobot/pi05" in checkpoint_str
+    looks_like_pi05 = bool(re.search(r"(^|[\\/_-])pi05([\\/_-]|$)", checkpoint_str)) or bool(
+        re.search(r"lerobot/pi05([\\/_-]|$)", checkpoint_str)
+    )
+    looks_like_pi0 = (
+        bool(re.search(r"(^|[\\/_-])pi0([\\/_-]|$)", checkpoint_str))
+        or bool(re.search(r"lerobot/pi0([\\/_-]|$)", checkpoint_str))
+    ) and not looks_like_pi05
     if cfg.model_family == "openvla" and (looks_like_pi0 or looks_like_pi05):
         suggested_family = "pi05" if looks_like_pi05 else "pi0"
         raise ValueError(
