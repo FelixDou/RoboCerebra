@@ -32,6 +32,9 @@ The conversion process consists of two steps:
 1. **HDF5 Conversion**: Use `regenerate_robocerebra_dataset.py` to convert raw RoboCerebra data to HDF5 format
 2. **RLDS Conversion**: Use `RoboCerebraDataset` builder to convert HDF5 data to RLDS format
 
+For LeRobot PI0 / PI0.5 fine-tuning there is also an optional third path:
+3. **LeRobot Conversion**: Use `convert_hdf5_to_lerobot.py` to export the per-step HDF5 episodes to a local `LeRobotDataset`
+
 ## Installation
 
 Create a conda environment using the provided environment.yml file:
@@ -116,6 +119,29 @@ The `RoboCerebraDataset_dataset_builder.py` handles the RLDS conversion from the
 cd RoboCerebraDataset
 CUDA_VISIBLE_DEVICES="" tfds build --overwrite
 ```
+
+## Optional: Export HDF5 to LeRobotDataset
+
+Use this path when you want to fine-tune LeRobot PI0 / PI0.5-style policies on RoboCerebra.
+
+```bash
+python convert_hdf5_to_lerobot.py \
+  --robocerebra_hdf5_root "./converted_hdf5/robocerebra_ideal" \
+  --repo_id "robocerebra/pi_train" \
+  --root "./lerobot_datasets" \
+  --overwrite
+```
+
+### LeRobot Export Notes
+
+- The exporter reads the `per_step/` episodes created by `regenerate_robocerebra_dataset.py`.
+- It preserves the same image orientation and state construction used by the RLDS builder:
+  - `observation.images.image`: third-person LIBERO camera
+  - `observation.images.wrist_image`: wrist camera
+  - `observation.state`: 8D end-effector + gripper state
+  - `action`: 7D RoboCerebra action
+- By default images are stored as encoded videos to match standard LeRobot datasets. Use `--image_storage image` if you prefer raw frames.
+- The default `--fps 10` mirrors LeRobot's LIBERO datasets, but you can override it if your training setup expects a different control frequency.
 
 ### Dataset Features
 

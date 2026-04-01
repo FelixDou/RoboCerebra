@@ -13,10 +13,11 @@ To address this gap, we introduce RoboCerebra, a benchmark for evaluating highle
 <img src="https://github.com/qiuboxiang/RoboCerebra/blob/main/assets/overview.png?raw=true" alt="RoboCerebra Overview" width="100%">
 </p>
 
-RoboCerebra provides two main components:
+RoboCerebra provides three main components:
 
 1. **Evaluation Suite** (`evaluation/`) - Model evaluation on RoboCerebra benchmark tasks
 2. **Dataset Builder** (`rlds_dataset_builder/`) - Convert RoboCerebra data to RLDS format for training
+3. **Training Helpers** (`training/`) - Launch LeRobot fine-tuning for PI0 / PI0.5-style policies
 
 ## Installation
 
@@ -90,6 +91,25 @@ pip install "numpy>=1.23.5,<2.0.0"
 pip install "peft>=0.17.0"
 ```
 
+### Option 3: PI0 / PI0.5 Fine-Tuning with LeRobot
+
+For fine-tuning LeRobot PI0 / PI0.5-style policies on RoboCerebra:
+
+```bash
+# Create and activate a LeRobot training environment
+conda create -n lerobot-pi python=3.10 -y
+conda activate lerobot-pi
+
+# Install PyTorch for your machine first: https://pytorch.org/get-started/locally/
+pip3 install torch torchvision torchaudio
+
+# Install LeRobot with PI policy support
+pip install "lerobot[pi] @ git+https://github.com/huggingface/lerobot.git"
+
+# Optional but recommended helpers used by the conversion scripts
+pip install h5py imageio tqdm
+```
+
 ## Configuration
 
 **Important**: Configure the following placeholder paths before use:
@@ -148,6 +168,41 @@ python regenerate_robocerebra_dataset.py \
 cd RoboCerebraDataset && CUDA_VISIBLE_DEVICES="" tfds build --overwrite
 ```
 
+### PI0 / PI0.5 Fine-Tuning
+
+Export the converted HDF5 episodes to a local LeRobot dataset, then launch fine-tuning:
+
+```bash
+# Step 1: Convert raw RoboCerebra data to per-step HDF5 episodes
+cd rlds_dataset_builder/
+python regenerate_robocerebra_dataset.py \
+  --dataset_name "robocerebra_train" \
+  --robocerebra_raw_data_dir "/path/to/RoboCerebra_Train" \
+  --robocerebra_target_dir "./converted_hdf5/robocerebra_train"
+
+# Step 2: Export those HDF5 episodes to a local LeRobot dataset
+python convert_hdf5_to_lerobot.py \
+  --robocerebra_hdf5_root "./converted_hdf5/robocerebra_train" \
+  --repo_id "robocerebra/pi_train" \
+  --root "./lerobot_datasets" \
+  --overwrite
+
+# Step 3a: Fine-tune a PI0 policy
+cd ..
+python training/finetune_lerobot_policy.py \
+  --model_family pi0 \
+  --dataset_repo_id "robocerebra/pi_train" \
+  --dataset_root "./rlds_dataset_builder/lerobot_datasets"
+
+# Step 3b: Fine-tune a PI0.5 policy
+python training/finetune_lerobot_policy.py \
+  --model_family pi05 \
+  --dataset_repo_id "robocerebra/pi_train" \
+  --dataset_root "./rlds_dataset_builder/lerobot_datasets"
+```
+
+The launcher automatically applies the documented mean/std normalization fallback for `pi05` when training on locally converted RoboCerebra datasets, which do not ship quantile statistics by default.
+
 ## Directory Structure
 
 ```
@@ -163,9 +218,12 @@ RoboCerebra/
 │   ├── episode.py                    # Episode-level execution
 │   ├── resume.py                     # Resume mechanism
 │   └── utils.py                      # Utility functions
+├── training/                         # LeRobot fine-tuning helpers
+│   └── finetune_lerobot_policy.py    # PI0 / PI0.5 training launcher
 └── rlds_dataset_builder/             # Dataset conversion tools
     ├── README.md                     # Conversion documentation
     ├── regenerate_robocerebra_dataset.py  # HDF5 conversion
+    ├── convert_hdf5_to_lerobot.py    # HDF5 -> LeRobotDataset export
     └── RoboCerebraDataset/           # RLDS builder
         └── RoboCerebraDataset_dataset_builder.py
 ```
