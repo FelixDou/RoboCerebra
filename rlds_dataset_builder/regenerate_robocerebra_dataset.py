@@ -12,9 +12,13 @@ Key features:
 5. Support dynamic distractor object processing
 """
 
-import argparse, json, os, shutil, xml.etree.ElementTree as ET
+import argparse, json, os, shutil, sys, xml.etree.ElementTree as ET
 from pathlib import Path
 import re, bisect
+
+LIBERO_SRC_ROOT = Path(__file__).resolve().parents[1] / "LIBERO"
+if str(LIBERO_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(LIBERO_SRC_ROOT))
 
 import torch
 import h5py, imageio, numpy as np, tqdm
@@ -28,6 +32,8 @@ import numpy as np
 BDDL_SCENE_MAPPING = {
     "LIBERO_Coffee_Table_Manipulation": "coffee_table",
     "LIBERO_Kitchen_Tabletop_Manipulation": "kitchen_table",
+    "LIBERO_Living_Room_Tabletop_Manipulation": "living_room_table",
+    "LIBERO_Study_Tabletop_Manipulation": "study_table",
 }
 
 def set_seed_everywhere(seed: int):
@@ -47,7 +53,7 @@ set_seed_everywhere(seed)
 # --------------------------------------------------------------------------- #
 #                    RoboCerebra Scene -> MJCF -> Texture Utilities           #
 # --------------------------------------------------------------------------- #
-LIBERO_ROOT = Path("/home/kslab/feli/work/Desktop/RoboCerebra/LIBERO")  # Set path to LIBERO installation directory
+LIBERO_ROOT = Path(os.environ.get("ROBOCEREBRA_LIBERO_ROOT", str(LIBERO_SRC_ROOT))).resolve()
 
 SCENES = {
     "coffee_table": {
@@ -198,6 +204,34 @@ def parse_step_file(txt_path: str):
             raise RuntimeError(f"{txt_path}: End frames not strictly increasing")
     return steps
 
+
+def has_required_case_files(case_dir: Path) -> bool:
+    return all(
+        (
+            next(case_dir.glob("*.bddl"), None),
+            next(case_dir.glob("*.hdf5"), None),
+            next(case_dir.glob("task_description*.txt"), None),
+        )
+    )
+
+
+def collect_case_dirs(raw_root: Path) -> list[Path]:
+    """
+    Return all case directories under `raw_root`.
+
+    Supports both layouts:
+      - raw_root/case_xxx/*
+      - raw_root/scene_name/case_xxx/*
+    """
+    if has_required_case_files(raw_root):
+        return [raw_root]
+
+    case_dirs = sorted(path for path in raw_root.rglob("*") if path.is_dir() and has_required_case_files(path))
+    if case_dirs:
+        return case_dirs
+
+    return sorted(path for path in raw_root.iterdir() if path.is_dir())
+
 # --------------------------------------------------------------------------- #
 #                          RoboCerebra Conversion Pipeline                   #
 # --------------------------------------------------------------------------- #
@@ -219,11 +253,12 @@ def main(args):
     metainfo_path = metainfo_dir / f"{args.dataset_name}_metainfo.json"
 
     raw_root = Path(args.robocerebra_raw_data_dir)
-    subdirs = sorted([d for d in raw_root.iterdir() if d.is_dir()])
+    subdirs = collect_case_dirs(raw_root)
 
     # Outer loop: process subdirectories
     for subdir in tqdm.tqdm(subdirs, desc="[SUBDIR] Raw subfolders"):
-        case_name = subdir.name
+        relative_case_path = subdir.relative_to(raw_root)
+        case_name = str(relative_case_path).replace(os.sep, "__")
 
         # Check required files
         files_ok = {
