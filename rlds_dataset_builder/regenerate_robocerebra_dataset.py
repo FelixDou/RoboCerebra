@@ -238,9 +238,18 @@ def collect_case_dirs(raw_root: Path) -> list[Path]:
 def main(args):
     # Create output directories for RoboCerebra dataset
     if os.path.exists(args.robocerebra_target_dir):
-        if input("Target dir exists. Overwrite? (y/N): ").lower() != "y":
-            return
-        shutil.rmtree(args.robocerebra_target_dir)
+        if args.overwrite:
+            shutil.rmtree(args.robocerebra_target_dir)
+        else:
+            try:
+                if input("Target dir exists. Overwrite? (y/N): ").lower() != "y":
+                    return
+            except OSError as exc:
+                raise RuntimeError(
+                    "Target directory already exists, but stdin is unavailable. "
+                    "Re-run with `--overwrite` for non-interactive execution."
+                ) from exc
+            shutil.rmtree(args.robocerebra_target_dir)
     per_step_root = Path(args.robocerebra_target_dir, "per_step")
     all_hdf5_root = Path(args.robocerebra_target_dir, "all_hdf5")
     per_step_root.mkdir(parents=True)
@@ -485,4 +494,6 @@ if __name__ == "__main__":
                        help="Output directory for converted HDF5 files")
     parser.add_argument("--scene", required=False, choices=list(SCENES),
                        help="Optional: Override auto-detected scene type. Available: %(choices)s")
+    parser.add_argument("--overwrite", action="store_true",
+                       help="Delete an existing target directory without prompting. Useful for nohup / batch runs.")
     main(parser.parse_args())
