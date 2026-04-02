@@ -414,6 +414,10 @@ def main(args):
                     eye_imgs.append(obs["robot0_eye_in_hand_image"])
                     vid_frames.append(obs["agentview_image"][::-1])  # flip vertical
 
+                if not actions:
+                    print(f"[Warning] Skip {case_name} ({var_full}): all actions became no-ops after filtering.")
+                    continue
+
                 # Convert to numpy arrays
                 states, actions = np.stack(states), np.stack(actions)
                 gripper_states, joint_states = map(np.stack, (gripper_states, joint_states))
@@ -424,11 +428,20 @@ def main(args):
                 rewards = np.zeros(len(actions), dtype=np.uint8); rewards[-1] = 1
 
                 # Map old end_frame to new end_frame
-                new_step_ends = [bisect.bisect_right(keep_idx, old_end)
+                sequence_len = len(actions)
+                new_step_ends = [min(bisect.bisect_right(keep_idx, old_end), sequence_len)
                                  for _, old_end in steps]
 
                 prev_end = 0
                 for (desc, _), new_end in zip(steps, new_step_ends):
+                    if prev_end >= sequence_len:
+                        break
+
+                    new_end = min(max(new_end, prev_end), sequence_len)
+                    if new_end <= prev_end:
+                        print(f"[Warning] Skip empty step `{desc}` for {case_name} ({var_full}).")
+                        continue
+
                     step_name = desc.replace(" ", "_")
                     idx = slice(prev_end, new_end)
 
