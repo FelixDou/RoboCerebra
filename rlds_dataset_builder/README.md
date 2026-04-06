@@ -35,6 +35,8 @@ The conversion process consists of two steps:
 For LeRobot PI0 / PI0.5 fine-tuning there is also an optional third path:
 3. **LeRobot Conversion**: Use `convert_hdf5_to_lerobot.py` to export the per-step HDF5 episodes to a local `LeRobotDataset`
 
+If you already have the train split in local RLDS / TFDS format, you can skip the raw replay step entirely and use `convert_rlds_to_lerobot.py` instead.
+
 ## Installation
 
 Create a conda environment using the provided environment.yml file:
@@ -142,6 +144,27 @@ python convert_hdf5_to_lerobot.py \
   - `action`: 7D RoboCerebra action
 - By default images are stored as encoded videos to match standard LeRobot datasets. Use `--image_storage image` if you prefer raw frames.
 - The default `--fps 10` mirrors LeRobot's LIBERO datasets, but you can override it if your training setup expects a different control frequency.
+
+## Optional: Export RLDS to LeRobotDataset
+
+Use this path when your train split already exists as a local TFDS export containing `dataset_info.json`, `features.json`, and `*.tfrecord-*` shards.
+
+```bash
+python convert_rlds_to_lerobot.py \
+  --rlds_dir "../robocerebra_data/RoboCerebra_trainset_coffee_table_p1p2_rlds/homerobo_trainset_p1p2" \
+  --rlds_dir "../robocerebra_data/RoboCerebra_trainset_coffee_table_p3_rlds/homerobo_trainset_p3" \
+  --rlds_dir "../robocerebra_data/RoboCerebra_trainset_kitchen_table_p1_rlds/homerobo_trainset_kitchen_table_p1" \
+  --rlds_dir "../robocerebra_data/RoboCerebra_trainset_study_table_p1_rlds/homerobo_trainset_study_table_p1" \
+  --repo_id "robocerebra/pi_train" \
+  --root "./lerobot_datasets" \
+  --overwrite
+```
+
+### RLDS Export Notes
+
+- You can pass either the dataset root that contains `1.0.0/` or the version directory itself.
+- Multiple `--rlds_dir` inputs are merged into a single local LeRobot dataset.
+- This path is substantially faster than `regenerate_robocerebra_dataset.py` because it reuses the already-exported RLDS observations instead of replaying demonstrations through LIBERO and MuJoCo.
 
 ### Dataset Features
 

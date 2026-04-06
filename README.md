@@ -203,6 +203,19 @@ python training/finetune_lerobot_policy.py \
 
 The launcher automatically applies the documented mean/std normalization fallback for `pi05` when training on locally converted RoboCerebra datasets, which do not ship quantile statistics by default.
 
+If you already have RoboCerebra in local RLDS / TFDS format, you can skip the expensive raw-demo replay step and export directly to LeRobot:
+
+```bash
+python rlds_dataset_builder/convert_rlds_to_lerobot.py \
+  --rlds_dir "./robocerebra_data/RoboCerebra_trainset_coffee_table_p1p2_rlds/homerobo_trainset_p1p2" \
+  --rlds_dir "./robocerebra_data/RoboCerebra_trainset_coffee_table_p3_rlds/homerobo_trainset_p3" \
+  --rlds_dir "./robocerebra_data/RoboCerebra_trainset_kitchen_table_p1_rlds/homerobo_trainset_kitchen_table_p1" \
+  --rlds_dir "./robocerebra_data/RoboCerebra_trainset_study_table_p1_rlds/homerobo_trainset_study_table_p1" \
+  --repo_id "robocerebra/pi_train" \
+  --root "./rlds_dataset_builder/lerobot_datasets" \
+  --overwrite
+```
+
 ## Directory Structure
 
 ```
