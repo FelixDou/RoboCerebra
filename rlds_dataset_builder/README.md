@@ -90,12 +90,14 @@ python regenerate_robocerebra_dataset.py \
   --robocerebra_target_dir "./converted_hdf5/robocerebra_ideal"
 ```
 
+This writes the HDF5 episodes only. Add `--write_mp4` if you also want preview videos.
 
 ### Parameters
 - `--dataset_name`: Output dataset name
 - `--robocerebra_raw_data_dir`: Path to raw RoboCerebra task directory (e.g., `<ROBOCEREBRA_BENCH_PATH>/Random_Disturbance`)
 - `--robocerebra_target_dir`: Output directory for converted HDF5 files
 - `--scene`: (Optional) Override auto-detected scene type.
+- `--write_mp4`: (Optional) Also export per-step MP4 previews. Disabled by default to reduce runtime and disk usage.
 
 ### HDF5 Output Structure
 ```

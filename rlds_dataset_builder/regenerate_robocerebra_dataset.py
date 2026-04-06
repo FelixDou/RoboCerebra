@@ -21,7 +21,7 @@ if str(LIBERO_SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(LIBERO_SRC_ROOT))
 
 import torch
-import h5py, imageio, numpy as np, tqdm
+import h5py, numpy as np, tqdm
 import robosuite.utils.transform_utils as T
 import libero.libero.envs.bddl_utils as BDDLUtils
 from libero.libero.envs import TASK_MAPPING
@@ -236,6 +236,10 @@ def collect_case_dirs(raw_root: Path) -> list[Path]:
 #                          RoboCerebra Conversion Pipeline                   #
 # --------------------------------------------------------------------------- #
 def main(args):
+    imageio_module = None
+    if args.write_mp4:
+        import imageio.v2 as imageio_module
+
     # Create output directories for RoboCerebra dataset
     if os.path.exists(args.robocerebra_target_dir):
         if args.overwrite:
@@ -361,7 +365,8 @@ def main(args):
                 gripper_states, joint_states = [], []
                 ee_pos, ee_ori, ee_states = [], [], []
                 robot_states = []
-                agent_imgs, eye_imgs, vid_frames = [], [], []
+                agent_imgs, eye_imgs = [], []
+                vid_frames = [] if args.write_mp4 else None
                 prev_action = None
 
                 for i, (st, act) in enumerate(zip(orig_states, orig_actions)):
@@ -412,7 +417,8 @@ def main(args):
                     # 7. Image data
                     agent_imgs.append(obs["agentview_image"])
                     eye_imgs.append(obs["robot0_eye_in_hand_image"])
-                    vid_frames.append(obs["agentview_image"][::-1])  # flip vertical
+                    if args.write_mp4:
+                        vid_frames.append(obs["agentview_image"][::-1])  # flip vertical
 
                 if not actions:
                     print(f"[Warning] Skip {case_name} ({var_full}): all actions became no-ops after filtering.")
@@ -471,8 +477,9 @@ def main(args):
                         grp.create_dataset("rewards",      data=rewards[idx])
                         grp.create_dataset("dones",        data=dones[idx])
 
-                    # Write video
-                    imageio.mimsave(mp4_path, vid_frames[prev_end:new_end], fps=30)
+                    # Write video only when explicitly requested.
+                    if args.write_mp4:
+                        imageio_module.mimsave(mp4_path, vid_frames[prev_end:new_end], fps=args.mp4_fps)
 
                     # Copy to flattened all_hdf5 directory
                     flat_name = f"{step_name}_{var_full}_{case_name}.hdf5"
@@ -509,4 +516,8 @@ if __name__ == "__main__":
                        help="Optional: Override auto-detected scene type. Available: %(choices)s")
     parser.add_argument("--overwrite", action="store_true",
                        help="Delete an existing target directory without prompting. Useful for nohup / batch runs.")
+    parser.add_argument("--write_mp4", action="store_true",
+                       help="Also export a per-step MP4 preview alongside each HDF5 episode. Disabled by default to save time and disk space.")
+    parser.add_argument("--mp4_fps", type=int, default=30,
+                       help="Frame rate used when `--write_mp4` is enabled.")
     main(parser.parse_args())

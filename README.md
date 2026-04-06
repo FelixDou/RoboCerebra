@@ -168,6 +168,8 @@ python regenerate_robocerebra_dataset.py \
 cd RoboCerebraDataset && CUDA_VISIBLE_DEVICES="" tfds build --overwrite
 ```
 
+The HDF5 conversion now skips MP4 preview generation by default to save storage. Add `--write_mp4` only if you explicitly want those videos.
+
 ### PI0 / PI0.5 Fine-Tuning
 
 Export the converted HDF5 episodes to a local LeRobot dataset, then launch fine-tuning:

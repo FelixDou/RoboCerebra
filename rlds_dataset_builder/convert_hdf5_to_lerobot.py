@@ -276,7 +276,20 @@ def create_lerobot_dataset(args: argparse.Namespace, features: dict[str, dict[st
     if "batch_encoding_size" in create_signature.parameters and args.image_storage == "video":
         create_kwargs["batch_encoding_size"] = args.batch_encoding_size
 
-    return LeRobotDataset.create(**create_kwargs)
+    try:
+        dataset = LeRobotDataset.create(**create_kwargs)
+    except FileExistsError:
+        # Some LeRobot versions interpret `root` as the dataset directory itself
+        # instead of the parent directory that should contain `repo_id`.
+        nested_root = Path(args.root).expanduser().resolve() / args.repo_id
+        if nested_root == Path(args.root).expanduser().resolve():
+            raise
+
+        retry_kwargs = dict(create_kwargs)
+        retry_kwargs["root"] = nested_root
+        dataset = LeRobotDataset.create(**retry_kwargs)
+
+    return dataset
 
 
 def add_episode(dataset, episode_spec: EpisodeSpec, episode_arrays: dict[str, np.ndarray]) -> int:
@@ -334,6 +347,7 @@ def main() -> None:
 
     features = build_feature_spec(args.image_storage, args.fps)
     dataset = create_lerobot_dataset(args, features)
+    dataset_root = Path(getattr(dataset, "root", root / args.repo_id))
 
     total_frames = 0
     total_episodes = 0
@@ -351,7 +365,7 @@ def main() -> None:
 
     print("LeRobot export complete.")
     print(f"Input HDF5 root : {per_step_root}")
-    print(f"Dataset root    : {root / args.repo_id}")
+    print(f"Dataset root    : {dataset_root}")
     print(f"Episodes        : {total_episodes}")
     print(f"Frames          : {total_frames}")
     print(f"FPS             : {args.fps}")
