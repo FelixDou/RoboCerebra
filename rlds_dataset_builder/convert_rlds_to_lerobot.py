@@ -157,9 +157,33 @@ def resolve_builder_dir(path_str: str) -> Path:
             "Please pass the specific version directory you want to use."
         )
 
+    nested_dataset_roots = []
+    for child in sorted(path.iterdir()):
+        if not child.is_dir():
+            continue
+        child_version_dirs = sorted(
+            grandchild for grandchild in child.iterdir() if grandchild.is_dir() and (grandchild / "dataset_info.json").is_file()
+        )
+        if len(child_version_dirs) == 1:
+            nested_dataset_roots.append(child_version_dirs[0])
+        elif len(child_version_dirs) > 1:
+            raise ValueError(
+                f"Multiple TFDS version directories found under nested dataset root {child}. "
+                "Please pass the specific version directory you want to use."
+            )
+
+    if len(nested_dataset_roots) == 1:
+        return nested_dataset_roots[0]
+    if len(nested_dataset_roots) > 1:
+        raise ValueError(
+            f"Multiple nested TFDS dataset roots found under {path}. "
+            "Please pass the specific dataset directory you want to use."
+        )
+
     raise FileNotFoundError(
         f"Could not find a TFDS builder directory under {path}. "
-        "Expected either `dataset_info.json` directly or a single child like `1.0.0/`."
+        "Expected either `dataset_info.json` directly, a single child like `1.0.0/`, "
+        "or a single nested dataset root containing `1.0.0/`."
     )
 
 
