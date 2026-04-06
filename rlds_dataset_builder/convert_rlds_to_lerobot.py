@@ -45,6 +45,7 @@ except ImportError:  # pragma: no cover - optional dependency
     tqdm = None
 
 from convert_hdf5_to_lerobot import (
+    add_frame_compat,
     build_feature_spec,
     create_lerobot_dataset,
     finalize_lerobot_dataset,
@@ -219,14 +220,15 @@ def add_rlds_episode(dataset, episode) -> tuple[int, str]:
         if task is None:
             task = step_task.strip()
 
-        dataset.add_frame(
+        add_frame_compat(
+            dataset,
             {
                 "observation.images.image": image,
                 "observation.images.wrist_image": wrist_image,
                 "observation.state": state,
                 "action": action,
             },
-            task=task or step_task,
+            task or step_task,
         )
         num_steps += 1
 

@@ -292,6 +292,20 @@ def create_lerobot_dataset(args: argparse.Namespace, features: dict[str, dict[st
     return dataset
 
 
+def add_frame_compat(dataset, frame: dict[str, object], task: str | None) -> None:
+    add_frame = getattr(dataset, "add_frame")
+    add_frame_signature = inspect.signature(add_frame)
+
+    if "task" in add_frame_signature.parameters:
+        add_frame(frame, task=task)
+        return
+
+    frame_with_task = dict(frame)
+    if task:
+        frame_with_task["task"] = task
+    add_frame(frame_with_task)
+
+
 def add_episode(dataset, episode_spec: EpisodeSpec, episode_arrays: dict[str, np.ndarray]) -> int:
     task = episode_spec.instruction
     images = episode_arrays["images"]
@@ -306,7 +320,7 @@ def add_episode(dataset, episode_spec: EpisodeSpec, episode_arrays: dict[str, np
             "observation.state": state[frame_idx],
             "action": actions[frame_idx],
         }
-        dataset.add_frame(frame, task=task)
+        add_frame_compat(dataset, frame, task)
 
     dataset.save_episode()
     return len(actions)
