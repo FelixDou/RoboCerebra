@@ -218,6 +218,22 @@ python rlds_dataset_builder/convert_rlds_to_lerobot.py \
   --overwrite
 ```
 
+If that export is still too slow for your machine or shared filesystem, you can train directly from the RLDS / TFDS shards without materializing a LeRobot dataset first:
+
+```bash
+python training/finetune_rlds_policy.py \
+  --model_family pi0 \
+  --rlds_dir "./robocerebra_data/RoboCerebra_trainset_coffee_table_p1p2_rlds" \
+  --rlds_dir "./robocerebra_data/RoboCerebra_trainset_coffee_table_p3_rlds" \
+  --rlds_dir "./robocerebra_data/RoboCerebra_trainset_kitchen_table_p1_rlds" \
+  --rlds_dir "./robocerebra_data/RoboCerebra_trainset_study_table_p1_rlds" \
+  --steps 3000 \
+  --batch_size 4 \
+  --num_workers 2
+```
+
+For a quick smoke test first, add `--max_episodes 100 --dry_run`.
+
 ## Directory Structure
 
 ```
@@ -235,6 +251,7 @@ RoboCerebra/
 │   └── utils.py                      # Utility functions
 ├── training/                         # LeRobot fine-tuning helpers
 │   └── finetune_lerobot_policy.py    # PI0 / PI0.5 training launcher
+│   └── finetune_rlds_policy.py       # Direct RLDS / TFDS -> PI0 / PI0.5 launcher
 └── rlds_dataset_builder/             # Dataset conversion tools
     ├── README.md                     # Conversion documentation
     ├── regenerate_robocerebra_dataset.py  # HDF5 conversion

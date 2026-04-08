@@ -167,6 +167,7 @@ python convert_rlds_to_lerobot.py \
 - You can pass either the dataset root that contains `1.0.0/` or the version directory itself.
 - Multiple `--rlds_dir` inputs are merged into a single local LeRobot dataset.
 - This path is substantially faster than `regenerate_robocerebra_dataset.py` because it reuses the already-exported RLDS observations instead of replaying demonstrations through LIBERO and MuJoCo.
+- If the LeRobot export itself is still too slow, you can bypass it entirely and launch LeRobot PI0 / PI0.5 training directly from the TFDS shards with `../training/finetune_rlds_policy.py`.
 
 ### Dataset Features
 
