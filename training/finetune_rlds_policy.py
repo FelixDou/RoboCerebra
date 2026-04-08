@@ -671,6 +671,36 @@ def import_lerobot_train_module():
     )
 
 
+def patch_pi0_image_feature_compat() -> None:
+    try:
+        pi0_module = importlib.import_module("lerobot.policies.pi0.modeling_pi0")
+    except ModuleNotFoundError:
+        return
+
+    model_cls = getattr(pi0_module, "PaliGemmaWithExpertModel", None)
+    if model_cls is None or getattr(model_cls, "_robocerebra_image_feature_patch", False):
+        return
+
+    def _embed_image_compat(self, image: torch.Tensor):
+        out_dtype = image.dtype
+        if image.dtype != torch.float32:
+            image = image.to(torch.float32)
+
+        image_outputs = self.paligemma.model.get_image_features(image)
+        if hasattr(image_outputs, "pooler_output"):
+            features = image_outputs.pooler_output
+        else:
+            features = image_outputs
+
+        features = features * self.paligemma.config.text_config.hidden_size**0.5
+        if features.dtype != out_dtype:
+            features = features.to(out_dtype)
+        return features
+
+    model_cls.embed_image = _embed_image_compat
+    model_cls._robocerebra_image_feature_patch = True
+
+
 def build_underlying_argv(args: argparse.Namespace, model_family: str) -> list[str]:
     job_name = args.job_name or f"robocerebra_{model_family}_rlds_finetune"
     output_dir = str(Path(args.output_dir).expanduser().resolve() / job_name)
@@ -774,6 +804,7 @@ def main() -> None:
         return
 
     train_module = import_lerobot_train_module()
+    patch_pi0_image_feature_compat()
     patch_make_dataset(train_module, builder_dirs, metadata, args.max_episodes)
     sys.argv = argv
     train_module.main()
