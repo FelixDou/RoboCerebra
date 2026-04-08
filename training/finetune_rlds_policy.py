@@ -437,6 +437,14 @@ class RLDSMetadata(SimpleNamespace):
     def total_episodes(self) -> int:
         return self.info["total_episodes"]
 
+    @property
+    def task_to_index(self) -> dict[str, int]:
+        return {row["task"]: int(row["task_index"]) for row in self.tasks}
+
+    @property
+    def index_to_task(self) -> dict[int, str]:
+        return {int(row["task_index"]): row["task"] for row in self.tasks}
+
 
 def _build_metadata_from_payload(payload: dict) -> RLDSMetadata:
     info = dict(payload["info"])
@@ -600,6 +608,7 @@ class RLDSStreamingDataset(IterableDataset):
         self.num_episodes = metadata.total_episodes
         self.action_chunk_size = action_chunk_size
         self.max_episodes = max_episodes
+        self._default_task_index = 0
 
     def __len__(self) -> int:
         return self.num_frames
@@ -665,7 +674,14 @@ class RLDSStreamingDataset(IterableDataset):
                 "observation.state": torch.from_numpy(states[step_idx]).float(),
                 "action": torch.from_numpy(action_chunk).float(),
                 "action_is_pad": torch.from_numpy(action_is_pad),
-                "task": task,
+                "task": torch.tensor(
+                    self.meta.task_to_index.get(task, self._default_task_index),
+                    dtype=torch.int64,
+                ),
+                "task_index": torch.tensor(
+                    self.meta.task_to_index.get(task, self._default_task_index),
+                    dtype=torch.int64,
+                ),
             }
 
 
@@ -722,6 +738,40 @@ def patch_pi0_image_feature_compat() -> None:
 
     model_cls.embed_image = _embed_image_compat
     model_cls._robocerebra_image_feature_patch = True
+
+
+def patch_tokenizer_processor_task_ids(metadata: RLDSMetadata) -> None:
+    try:
+        tokenizer_module = importlib.import_module("lerobot.processor.tokenizer_processor")
+        types_module = importlib.import_module("lerobot.types")
+    except ModuleNotFoundError:
+        return
+
+    tokenizer_step_cls = getattr(tokenizer_module, "TokenizerProcessorStep", None)
+    transition_key_cls = getattr(types_module, "TransitionKey", None)
+    if tokenizer_step_cls is None or getattr(tokenizer_step_cls, "_robocerebra_task_id_patch", False):
+        return
+
+    original_get_task = tokenizer_step_cls.get_task
+    index_to_task = metadata.index_to_task
+
+    def _get_task_compat(self, transition):
+        complementary_data = None
+        if transition_key_cls is not None:
+            complementary_data = transition.get(getattr(transition_key_cls, "COMPLEMENTARY_DATA", None))
+        if complementary_data is None:
+            complementary_data = transition.get("complementary_data", {})
+        task = complementary_data.get(self.task_key)
+        if isinstance(task, torch.Tensor):
+            if task.ndim == 0:
+                return [index_to_task.get(int(task.item()), "")]
+            return [index_to_task.get(int(idx), "") for idx in task.detach().cpu().tolist()]
+        if isinstance(task, list) and task and all(isinstance(item, (int, np.integer)) for item in task):
+            return [index_to_task.get(int(idx), "") for idx in task]
+        return original_get_task(self, transition)
+
+    tokenizer_step_cls.get_task = _get_task_compat
+    tokenizer_step_cls._robocerebra_task_id_patch = True
 
 
 def build_underlying_argv(args: argparse.Namespace, model_family: str) -> list[str]:
@@ -842,6 +892,7 @@ def main() -> None:
 
     train_module = import_lerobot_train_module()
     patch_pi0_image_feature_compat()
+    patch_tokenizer_processor_task_ids(metadata)
     patch_make_dataset(train_module, builder_dirs, metadata, args.max_episodes)
     sys.argv = argv
     train_module.main()
