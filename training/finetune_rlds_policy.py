@@ -19,6 +19,7 @@ from pathlib import Path
 import random
 import shlex
 import sys
+import time
 from types import SimpleNamespace
 
 
@@ -321,8 +322,25 @@ def disable_tensorflow_gpu() -> None:
 
 
 def builder_dir_to_tfds_uri(builder_dir: Path) -> str:
-    """Force TFDS to treat cluster paths like /gs/bs/... as local files."""
-    return builder_dir.expanduser().absolute().as_uri()
+    """Force TFDS to treat cluster paths like /gs/bs/... as local filesystem paths."""
+    resolved = builder_dir.expanduser().resolve()
+    try:
+        relative = os.path.relpath(resolved, Path.cwd().resolve())
+    except ValueError:
+        return str(resolved)
+
+    if not relative.startswith("."):
+        relative = f"./{relative}"
+    return relative
+
+
+def wait_for_metadata_cache(cache_path: Path, timeout_s: int = 7200, poll_s: float = 5.0) -> None:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if cache_path.exists():
+            return
+        time.sleep(poll_s)
+    raise TimeoutError(f"Timed out waiting for RLDS metadata cache: {cache_path}")
 
 
 def _cardinality_to_int(steps_ds) -> int:
@@ -789,13 +807,27 @@ def main() -> None:
         if args.metadata_cache is not None
         else compute_default_cache_path(builder_dirs, args.dataset_fps, args.max_episodes)
     )
-    metadata = scan_rlds_metadata(
-        builder_dirs=builder_dirs,
-        fps=args.dataset_fps,
-        cache_path=cache_path,
-        force_recompute=args.force_recompute_metadata,
-        max_episodes=args.max_episodes,
-    )
+    rank = int(os.environ.get("RANK", "0"))
+    world_size = int(os.environ.get("WORLD_SIZE", "1"))
+
+    if world_size > 1 and rank != 0:
+        logging.info("Rank %s waiting for rank 0 to prepare RLDS metadata cache: %s", rank, cache_path)
+        wait_for_metadata_cache(cache_path)
+        metadata = scan_rlds_metadata(
+            builder_dirs=builder_dirs,
+            fps=args.dataset_fps,
+            cache_path=cache_path,
+            force_recompute=False,
+            max_episodes=args.max_episodes,
+        )
+    else:
+        metadata = scan_rlds_metadata(
+            builder_dirs=builder_dirs,
+            fps=args.dataset_fps,
+            cache_path=cache_path,
+            force_recompute=args.force_recompute_metadata,
+            max_episodes=args.max_episodes,
+        )
 
     argv = build_underlying_argv(args, model_family)
     print("Resolved direct-RLDS LeRobot training command:")
