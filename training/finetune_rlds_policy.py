@@ -320,6 +320,11 @@ def disable_tensorflow_gpu() -> None:
         pass
 
 
+def builder_dir_to_tfds_uri(builder_dir: Path) -> str:
+    """Force TFDS to treat cluster paths like /gs/bs/... as local files."""
+    return builder_dir.expanduser().absolute().as_uri()
+
+
 def _cardinality_to_int(steps_ds) -> int:
     cardinality = tf.data.experimental.cardinality(steps_ds)
     if hasattr(cardinality, "numpy"):
@@ -461,7 +466,7 @@ def scan_rlds_metadata(
 
     stop_early = False
     for builder_dir in builder_dirs:
-        builder = tfds.builder_from_directory(builder_dir=str(builder_dir))
+        builder = tfds.builder_from_directory(builder_dir=builder_dir_to_tfds_uri(builder_dir))
         ds = builder.as_dataset(split="train", shuffle_files=False)
         total_examples = getattr(builder.info.splits["train"], "num_examples", None)
         progress = ds
@@ -595,7 +600,7 @@ class RLDSStreamingDataset(IterableDataset):
         emitted_episodes = 0
 
         for builder_dir in builder_dirs:
-            builder = tfds.builder_from_directory(builder_dir=str(builder_dir))
+            builder = tfds.builder_from_directory(builder_dir=builder_dir_to_tfds_uri(builder_dir))
             ds = builder.as_dataset(split="train", shuffle_files=True)
             if total_shards > 1:
                 ds = ds.shard(total_shards, shard_index)
