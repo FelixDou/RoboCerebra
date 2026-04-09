@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import random
 import shlex
+import shutil
 import sys
 import time
 from types import SimpleNamespace
@@ -149,6 +150,15 @@ def parse_args() -> argparse.Namespace:
         "--output_dir",
         default="./outputs",
         help="Parent output directory for logs and checkpoints.",
+    )
+    parser.add_argument(
+        "--keep_only_last_checkpoint_on_success",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "After a successful training run, delete all checkpoint directories except the last one. "
+            "Useful for saving disk space once the run finishes."
+        ),
     )
     parser.add_argument(
         "--steps",
@@ -816,6 +826,58 @@ def build_underlying_argv(args: argparse.Namespace, model_family: str) -> list[s
     return argv
 
 
+def resolve_run_output_dir(args: argparse.Namespace, model_family: str) -> Path:
+    job_name = args.job_name or f"robocerebra_{model_family}_rlds_finetune"
+    return Path(args.output_dir).expanduser().resolve() / job_name
+
+
+def resolve_last_checkpoint_dir(checkpoints_dir: Path) -> Path | None:
+    last_symlink = checkpoints_dir / "last"
+    if last_symlink.exists():
+        try:
+            resolved = last_symlink.resolve(strict=True)
+        except FileNotFoundError:
+            resolved = None
+        if resolved is not None and resolved.parent == checkpoints_dir:
+            return resolved
+
+    numbered_dirs = [path for path in checkpoints_dir.iterdir() if path.is_dir() and path.name.isdigit()]
+    if not numbered_dirs:
+        return None
+    return max(numbered_dirs, key=lambda path: int(path.name))
+
+
+def prune_intermediate_checkpoints(output_dir: Path) -> None:
+    checkpoints_dir = output_dir / "checkpoints"
+    if not checkpoints_dir.is_dir():
+        logging.info("No checkpoints directory found under %s; skipping checkpoint pruning.", output_dir)
+        return
+
+    last_checkpoint_dir = resolve_last_checkpoint_dir(checkpoints_dir)
+    if last_checkpoint_dir is None:
+        logging.warning("Could not determine the last checkpoint under %s; skipping checkpoint pruning.", checkpoints_dir)
+        return
+
+    removed = []
+    for child in checkpoints_dir.iterdir():
+        if child.name == "last" or not child.is_dir():
+            continue
+        if child.resolve() == last_checkpoint_dir.resolve():
+            continue
+        shutil.rmtree(child)
+        removed.append(child.name)
+
+    if removed:
+        logging.info(
+            "Deleted %s intermediate checkpoints from %s. Kept only %s.",
+            len(removed),
+            checkpoints_dir,
+            last_checkpoint_dir.name,
+        )
+    else:
+        logging.info("Checkpoint pruning found no intermediate checkpoints to delete under %s.", checkpoints_dir)
+
+
 def patch_make_dataset(train_module, builder_dirs: list[Path], metadata: RLDSMetadata, max_episodes: int | None):
     def _patched_make_dataset(cfg):
         apply_imagenet_stats_if_requested(cfg, metadata)
@@ -894,8 +956,11 @@ def main() -> None:
     patch_pi0_image_feature_compat()
     patch_tokenizer_processor_task_ids(metadata)
     patch_make_dataset(train_module, builder_dirs, metadata, args.max_episodes)
+    output_dir = resolve_run_output_dir(args, model_family)
     sys.argv = argv
     train_module.main()
+    if args.keep_only_last_checkpoint_on_success and rank == 0:
+        prune_intermediate_checkpoints(output_dir)
 
 
 if __name__ == "__main__":
