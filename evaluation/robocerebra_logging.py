@@ -22,20 +22,31 @@ from config import GenerateConfig
 
 logger = logging.getLogger(__name__)
 DATE_TIME = datetime.now().strftime("%Y_%m_%d-%H_%M_%S")
-BASE_DIR = Path.cwd() / "rollouts" / DATE_TIME
-BASE_DIR.mkdir(parents=True, exist_ok=True)
+BASE_DIR: Path | None = None
+
+
+def resolve_rollout_base_dir(cfg: GenerateConfig) -> Path:
+    if cfg.rollout_dir:
+        rollout_root = Path(cfg.rollout_dir).expanduser().resolve()
+    else:
+        rollout_root = Path(cfg.local_log_dir).expanduser().resolve().parent / "rollouts"
+    return rollout_root / DATE_TIME
 
 
 def setup_logging(cfg: GenerateConfig):
+    global BASE_DIR
     run_id = f"EVAL-{cfg.task_suite_name}-{cfg.model_family}-{DATE_TIME}"
     if cfg.run_id_note:
         run_id += f"--{cfg.run_id_note}"
     os.makedirs(cfg.local_log_dir, exist_ok=True)
+    BASE_DIR = resolve_rollout_base_dir(cfg)
+    BASE_DIR.mkdir(parents=True, exist_ok=True)
     local_log_filepath = os.path.join(cfg.local_log_dir, run_id + ".txt")
     results_log_filepath = os.path.join(cfg.local_log_dir, run_id + "_results.json")
     log_file = open(local_log_filepath, "w")
     logger.info(f"Logging to {local_log_filepath}")
     logger.info(f"Results will be saved to {results_log_filepath}")
+    logger.info(f"Rollout videos will be saved under {BASE_DIR}")
     if cfg.use_wandb:
         wandb.init(entity=cfg.wandb_entity, project=cfg.wandb_project, name=run_id)
     return log_file, local_log_filepath, run_id, results_log_filepath
@@ -112,6 +123,9 @@ def save_rollout_video(
     task_name: str = ""
 ):
     """Saves an MP4 replay of an episode with organized directory structure."""
+    if BASE_DIR is None:
+        raise RuntimeError("Rollout base directory is not initialized. Call setup_logging() before saving videos.")
+
     # Create hierarchical directory structure: rollouts/{DATE_TIME}/{task_suite}/{case_name}
     if task_suite and task_name:
         # Clean directory names by replacing spaces with underscores

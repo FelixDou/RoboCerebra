@@ -87,6 +87,7 @@ class GenerateConfig:
     # ------------------------------------------------------------------
     run_id_note: Optional[str] = None
     local_log_dir: str = "./experiments/logs"
+    rollout_dir: Optional[str] = None
     use_wandb: bool = False
     wandb_entity: str = "<WANDB_ENTITY>"  # TODO: Set your WandB entity name
     wandb_project: str = "<WANDB_PROJECT>"  # TODO: Set your WandB project name
