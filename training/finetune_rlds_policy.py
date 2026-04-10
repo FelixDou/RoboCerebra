@@ -784,6 +784,65 @@ def patch_tokenizer_processor_task_ids(metadata: RLDSMetadata) -> None:
     tokenizer_step_cls._robocerebra_task_id_patch = True
 
 
+def patch_pi05_processor_task_ids(metadata: RLDSMetadata) -> None:
+    try:
+        processor_module = importlib.import_module("lerobot.policies.pi05.processor_pi05")
+        types_module = importlib.import_module("lerobot.types")
+    except ModuleNotFoundError:
+        return
+
+    transition_key_cls = getattr(types_module, "TransitionKey", None)
+    index_to_task = metadata.index_to_task
+
+    def _decode_task(task):
+        if isinstance(task, torch.Tensor):
+            if task.ndim == 0:
+                return index_to_task.get(int(task.item()), "")
+            return [index_to_task.get(int(idx), "") for idx in task.detach().cpu().tolist()]
+        if isinstance(task, list) and task and all(isinstance(item, (int, np.integer)) for item in task):
+            return [index_to_task.get(int(idx), "") for idx in task]
+        return task
+
+    def _maybe_decode_transition_task(step_self, transition):
+        complementary_data = None
+        if transition_key_cls is not None:
+            complementary_data = transition.get(getattr(transition_key_cls, "COMPLEMENTARY_DATA", None))
+        if complementary_data is None:
+            complementary_data = transition.get("complementary_data", {})
+        task_key = getattr(step_self, "task_key", "task")
+        if task_key in complementary_data:
+            complementary_data[task_key] = _decode_task(complementary_data[task_key])
+        return complementary_data, task_key
+
+    for _, step_cls in vars(processor_module).items():
+        if not isinstance(step_cls, type):
+            continue
+        if step_cls.__module__ != processor_module.__name__:
+            continue
+        if getattr(step_cls, "_robocerebra_task_id_patch", False):
+            continue
+
+        original_call = getattr(step_cls, "__call__", None)
+        if original_call is None:
+            continue
+
+        def _call_compat(self, transition, _original_call=original_call):
+            complementary_data, task_key = _maybe_decode_transition_task(self, transition)
+            try:
+                return _original_call(self, transition)
+            except AttributeError as exc:
+                if "strip" not in str(exc) or complementary_data is None:
+                    raise
+                task = complementary_data.get(task_key)
+                if isinstance(task, list) and len(task) == 1:
+                    complementary_data[task_key] = task[0]
+                    return _original_call(self, transition)
+                raise
+
+        step_cls.__call__ = _call_compat
+        step_cls._robocerebra_task_id_patch = True
+
+
 def build_underlying_argv(args: argparse.Namespace, model_family: str) -> list[str]:
     job_name = args.job_name or f"robocerebra_{model_family}_rlds_finetune"
     output_dir = str(Path(args.output_dir).expanduser().resolve() / job_name)
@@ -955,6 +1014,7 @@ def main() -> None:
     train_module = import_lerobot_train_module()
     patch_pi0_image_feature_compat()
     patch_tokenizer_processor_task_ids(metadata)
+    patch_pi05_processor_task_ids(metadata)
     patch_make_dataset(train_module, builder_dirs, metadata, args.max_episodes)
     output_dir = resolve_run_output_dir(args, model_family)
     sys.argv = argv
