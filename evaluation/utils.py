@@ -19,7 +19,20 @@ from typing import Dict, List, Optional, Sequence, Tuple, Any
 
 import numpy as np
 from PIL import Image
-from robosuite import load_controller_config
+
+try:
+    from robosuite import load_controller_config
+except ImportError:
+    try:
+        from robosuite.controllers import load_controller_config
+    except ImportError:
+        from robosuite.controllers import load_part_controller_config as _load_part_controller_config
+
+        def load_controller_config(default_controller=None, custom_fpath=None):
+            return _load_part_controller_config(
+                default_controller=default_controller,
+                custom_fpath=custom_fpath,
+            )
 
 LIBERO_SRC_ROOT = Path(__file__).resolve().parents[1] / "LIBERO"
 if str(LIBERO_SRC_ROOT) not in sys.path:

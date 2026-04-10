@@ -5,6 +5,14 @@ import matplotlib.cm as cm
 
 from robosuite.utils.errors import RandomizationError
 
+if not hasattr(suite, "load_controller_config"):
+    try:
+        from robosuite.controllers import load_controller_config as _load_controller_config
+    except ImportError:
+        from robosuite.controllers import load_part_controller_config as _load_controller_config
+
+    suite.load_controller_config = _load_controller_config
+
 import libero.libero.envs.bddl_utils as BDDLUtils
 from libero.libero.envs import *
 
