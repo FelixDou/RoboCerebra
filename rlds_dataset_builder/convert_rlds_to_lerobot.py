@@ -111,6 +111,15 @@ def parse_args() -> argparse.Namespace:
         help="Optional cap for quick debugging runs.",
     )
     parser.add_argument(
+        "--skip_episodes",
+        type=int,
+        default=0,
+        help=(
+            "Number of RLDS episodes to skip before exporting. "
+            "Use with --max_episodes to produce resumable/mergeable shards."
+        ),
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Delete an existing local LeRobot dataset at the target path before exporting.",
@@ -256,6 +265,8 @@ def main() -> None:
     args = parse_args()
     ensure_runtime_dependencies()
     disable_tensorflow_gpu()
+    if args.skip_episodes < 0:
+        raise ValueError("--skip_episodes must be non-negative.")
 
     builder_dirs = [resolve_builder_dir(path_str) for path_str in args.rlds_dir]
     root = Path(args.root).expanduser().resolve()
@@ -268,16 +279,36 @@ def main() -> None:
 
     total_episodes = 0
     total_frames = 0
+    skip_remaining = args.skip_episodes
 
     try:
         for builder_dir in builder_dirs:
             builder, tf_dataset, total_examples = next(iter_builder_episodes(builder_dir))
+            progress_total = total_examples
+
+            if skip_remaining:
+                if total_examples is not None and skip_remaining >= total_examples:
+                    skip_remaining -= int(total_examples)
+                    continue
+
+                tf_dataset = tf_dataset.skip(skip_remaining)
+                if total_examples is not None:
+                    progress_total = max(0, int(total_examples) - skip_remaining)
+                skip_remaining = 0
+
+            if args.max_episodes is not None:
+                remaining_episode_budget = args.max_episodes - total_episodes
+                if remaining_episode_budget <= 0:
+                    break
+                tf_dataset = tf_dataset.take(remaining_episode_budget)
+                if progress_total is not None:
+                    progress_total = min(progress_total, remaining_episode_budget)
 
             progress = tf_dataset
             if tqdm is not None:
                 progress = tqdm(
                     tf_dataset,
-                    total=total_examples,
+                    total=progress_total,
                     desc=f"Converting {builder.info.name}",
                     unit="episode",
                 )
