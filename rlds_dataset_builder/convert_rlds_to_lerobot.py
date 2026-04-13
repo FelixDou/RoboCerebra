@@ -206,7 +206,7 @@ def iter_builder_episodes(builder_dir: Path):
 
 
 def add_rlds_episode(dataset, episode) -> tuple[int, str]:
-    task = None
+    first_task = None
     num_steps = 0
 
     for step in episode["steps"]:
@@ -216,9 +216,9 @@ def add_rlds_episode(dataset, episode) -> tuple[int, str]:
         state = np.asarray(observation["state"].numpy(), dtype=np.float32)
         action = np.asarray(step["action"].numpy(), dtype=np.float32)
 
-        step_task = decode_text(step["language_instruction"])
-        if task is None:
-            task = step_task.strip()
+        step_task = decode_text(step["language_instruction"]).strip()
+        if first_task is None:
+            first_task = step_task
 
         add_frame_compat(
             dataset,
@@ -228,15 +228,15 @@ def add_rlds_episode(dataset, episode) -> tuple[int, str]:
                 "observation.state": state,
                 "action": action,
             },
-            task or step_task,
+            step_task,
         )
         num_steps += 1
 
     if num_steps == 0:
-        return 0, task or ""
+        return 0, first_task or ""
 
     dataset.save_episode()
-    return num_steps, task or ""
+    return num_steps, first_task or ""
 
 
 def main() -> None:
