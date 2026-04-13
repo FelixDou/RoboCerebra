@@ -139,6 +139,19 @@ def disable_tensorflow_gpu() -> None:
         pass
 
 
+def builder_dir_to_tfds_uri(builder_dir: Path) -> str:
+    """Force TFDS to treat cluster paths like /gs/bs/... as local filesystem paths."""
+    resolved = builder_dir.expanduser().resolve()
+    try:
+        relative = os.path.relpath(resolved, Path.cwd().resolve())
+    except ValueError:
+        return str(resolved)
+
+    if not relative.startswith("."):
+        relative = f"./{relative}"
+    return relative
+
+
 def resolve_builder_dir(path_str: str) -> Path:
     path = Path(path_str).expanduser().resolve()
     if not path.exists():
@@ -199,7 +212,7 @@ def decode_text(value) -> str:
 
 
 def iter_builder_episodes(builder_dir: Path):
-    builder = tfds.builder_from_directory(builder_dir=str(builder_dir))
+    builder = tfds.builder_from_directory(builder_dir=builder_dir_to_tfds_uri(builder_dir))
     dataset = builder.as_dataset(split="train", shuffle_files=False)
     total_examples = getattr(builder.info.splits["train"], "num_examples", None)
     yield builder, dataset, total_examples
