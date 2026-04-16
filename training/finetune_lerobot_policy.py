@@ -480,8 +480,9 @@ def collapse_short_action_window(actions, model_label: str, report_state: dict[s
         return actions
 
     shape = tuple(int(dim) for dim in actions.shape)
-    short_window = len(shape) == 3 and shape[1] <= 8
-    nested_short_window = len(shape) == 4 and shape[1] <= 8
+    action_like = shape[-1] <= 64
+    short_window = action_like and len(shape) == 3 and shape[1] <= 8
+    nested_short_window = action_like and len(shape) == 4 and shape[1] <= 8
     if not short_window and not nested_short_window:
         return actions
 
@@ -526,7 +527,11 @@ def patch_policy_text_mask_compat(model_family: str) -> None:
         token_name, mask_name = token_mask_pair
         token_arg_index = parameter_names.index(token_name) - 1
         mask_arg_index = parameter_names.index(mask_name) - 1
-        action_arg_index = parameter_names.index("actions") - 1 if "actions" in parameter_names else None
+        action_arg_index = None
+        for action_name in ("actions", "action"):
+            if action_name in parameter_names:
+                action_arg_index = parameter_names.index(action_name) - 1
+                break
         state = {"reported_action": False}
 
         def _forward_with_token_mask_compat(
@@ -553,10 +558,14 @@ def patch_policy_text_mask_compat(model_family: str) -> None:
                 )
             if "actions" in kwargs:
                 kwargs["actions"] = collapse_short_action_window(kwargs["actions"], __model_label, __state)
+            elif "action" in kwargs:
+                kwargs["action"] = collapse_short_action_window(kwargs["action"], __model_label, __state)
             elif __action_arg_index is not None and __action_arg_index < len(args):
                 args[__action_arg_index] = collapse_short_action_window(
                     args[__action_arg_index], __model_label, __state
                 )
+            else:
+                args = [collapse_short_action_window(arg, __model_label, __state) for arg in args]
             return __original_forward(self, *args, **kwargs)
 
         _forward_with_token_mask_compat._robocerebra_token_mask_compat = True
