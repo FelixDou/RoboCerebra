@@ -11,10 +11,14 @@ needed for datasets without quantile statistics.
 from __future__ import annotations
 
 import argparse
+import copy
+import importlib
+import json
 import shlex
 import shutil
 import subprocess
 import sys
+from bisect import bisect_right
 from pathlib import Path
 
 
@@ -194,6 +198,203 @@ def default_policy_repo_id(model_family: str, job_name: str) -> str:
     return f"robocerebra/{repo_suffix}"
 
 
+def parse_dataset_repo_ids(raw_repo_id: str) -> list[str]:
+    raw_repo_id = raw_repo_id.strip()
+    if not raw_repo_id:
+        raise ValueError("--dataset_repo_id cannot be empty.")
+
+    if raw_repo_id.startswith("["):
+        parsed = json.loads(raw_repo_id)
+        if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+            raise ValueError("--dataset_repo_id JSON must be a list of strings.")
+        repo_ids = [item.strip() for item in parsed if item.strip()]
+    else:
+        repo_ids = [item.strip() for item in raw_repo_id.split(",") if item.strip()]
+
+    if not repo_ids:
+        raise ValueError("--dataset_repo_id did not contain any usable dataset repo ids.")
+    return repo_ids
+
+
+def resolve_local_dataset_root(base_root: Path, repo_id: str) -> Path:
+    base_root = base_root.expanduser().resolve()
+    candidates = [
+        base_root,
+        base_root / repo_id,
+        base_root / repo_id.split("/")[-1],
+    ]
+    for candidate in candidates:
+        if (candidate / "meta" / "info.json").is_file():
+            return candidate
+    return base_root / repo_id
+
+
+def import_lerobot_train_module():
+    repo_lerobot_src = Path(__file__).resolve().parents[1] / "lerobot" / "src"
+    if repo_lerobot_src.is_dir() and str(repo_lerobot_src) not in sys.path:
+        sys.path.insert(0, str(repo_lerobot_src))
+
+    for module_name in ("lerobot.scripts.lerobot_train", "lerobot.scripts.train"):
+        try:
+            return importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+
+    raise ModuleNotFoundError(
+        "Could not import LeRobot's training entrypoint. Install LeRobot or ensure `./lerobot/src` exists."
+    )
+
+
+def maybe_as_tensor(value):
+    try:
+        import torch
+    except ImportError:  # pragma: no cover - LeRobot training requires torch.
+        return None
+
+    if isinstance(value, torch.Tensor):
+        return value.detach().float()
+    try:
+        return torch.as_tensor(value, dtype=torch.float32)
+    except (TypeError, ValueError):
+        return None
+
+
+def convert_tensor_like(tensor, template):
+    import torch
+
+    if isinstance(template, torch.Tensor):
+        return tensor.to(device=template.device, dtype=template.dtype)
+    return tensor.cpu().tolist()
+
+
+def merge_weighted_stats(datasets):
+    import torch
+
+    stats_by_dataset = [getattr(getattr(dataset, "meta", None), "stats", None) for dataset in datasets]
+    if not stats_by_dataset or any(stats is None for stats in stats_by_dataset):
+        return None
+
+    merged = copy.deepcopy(stats_by_dataset[0])
+    weights = [float(getattr(dataset, "num_frames", len(dataset))) for dataset in datasets]
+    total_weight = sum(weights)
+    if total_weight <= 0:
+        return merged
+
+    for feature_key, feature_stats in list(merged.items()):
+        if not isinstance(feature_stats, dict):
+            continue
+
+        source_feature_stats = [stats.get(feature_key, {}) for stats in stats_by_dataset]
+        if all("mean" in stats and "std" in stats for stats in source_feature_stats):
+            means = [maybe_as_tensor(stats["mean"]) for stats in source_feature_stats]
+            stds = [maybe_as_tensor(stats["std"]) for stats in source_feature_stats]
+            if all(mean is not None for mean in means) and all(std is not None for std in stds):
+                weighted_mean = sum(weight * mean for weight, mean in zip(weights, means, strict=True)) / total_weight
+                second_moment = sum(
+                    weight * (std.square() + mean.square())
+                    for weight, mean, std in zip(weights, means, stds, strict=True)
+                ) / total_weight
+                variance = torch.clamp(second_moment - weighted_mean.square(), min=1e-12)
+                feature_stats["mean"] = convert_tensor_like(weighted_mean, source_feature_stats[0]["mean"])
+                feature_stats["std"] = convert_tensor_like(torch.sqrt(variance), source_feature_stats[0]["std"])
+
+        if all("min" in stats for stats in source_feature_stats):
+            mins = [maybe_as_tensor(stats["min"]) for stats in source_feature_stats]
+            if all(min_value is not None for min_value in mins):
+                feature_stats["min"] = convert_tensor_like(torch.stack(mins).amin(dim=0), source_feature_stats[0]["min"])
+
+        if all("max" in stats for stats in source_feature_stats):
+            maxs = [maybe_as_tensor(stats["max"]) for stats in source_feature_stats]
+            if all(max_value is not None for max_value in maxs):
+                feature_stats["max"] = convert_tensor_like(torch.stack(maxs).amax(dim=0), source_feature_stats[0]["max"])
+
+    return merged
+
+
+class MultiLocalLeRobotDataset:
+    """Present several local LeRobotDataset shards as one map-style dataset."""
+
+    def __init__(self, repo_ids: list[str], dataset_root: Path) -> None:
+        from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+        self.repo_ids = list(repo_ids)
+        self.root = Path(dataset_root).expanduser().resolve()
+        self.datasets = []
+        self.dataset_roots = []
+
+        for repo_id in self.repo_ids:
+            local_root = resolve_local_dataset_root(self.root, repo_id)
+            self.datasets.append(LeRobotDataset(repo_id=repo_id, root=local_root))
+            self.dataset_roots.append(local_root)
+
+        if not self.datasets:
+            raise ValueError("No local LeRobot shards were loaded.")
+
+        self.cumulative_sizes = []
+        running_size = 0
+        for dataset in self.datasets:
+            running_size += len(dataset)
+            self.cumulative_sizes.append(running_size)
+
+        self.num_frames = sum(int(getattr(dataset, "num_frames", len(dataset))) for dataset in self.datasets)
+        self.num_episodes = sum(int(getattr(dataset, "num_episodes", 0)) for dataset in self.datasets)
+        try:
+            self.meta = copy.deepcopy(self.datasets[0].meta)
+        except Exception:
+            # Some LeRobot metadata versions carry objects that do not deep-copy
+            # cleanly. Reusing the first shard's metadata is still safe because
+            # all shards were produced by the same exporter with the same schema.
+            self.meta = self.datasets[0].meta
+        self._patch_meta()
+
+    def _patch_meta(self) -> None:
+        if hasattr(self.meta, "info") and isinstance(self.meta.info, dict):
+            self.meta.info["total_frames"] = self.num_frames
+            self.meta.info["total_episodes"] = self.num_episodes
+
+        for attr_name, value in (("total_frames", self.num_frames), ("total_episodes", self.num_episodes)):
+            if hasattr(self.meta, attr_name):
+                try:
+                    setattr(self.meta, attr_name, value)
+                except AttributeError:
+                    pass
+
+        merged_stats = merge_weighted_stats(self.datasets)
+        if merged_stats is not None and hasattr(self.meta, "stats"):
+            self.meta.stats = merged_stats
+
+    def __len__(self) -> int:
+        return self.cumulative_sizes[-1]
+
+    def __getitem__(self, index: int):
+        if index < 0:
+            index += len(self)
+        if index < 0 or index >= len(self):
+            raise IndexError(index)
+
+        dataset_index = bisect_right(self.cumulative_sizes, index)
+        previous_size = self.cumulative_sizes[dataset_index - 1] if dataset_index > 0 else 0
+        return self.datasets[dataset_index][index - previous_size]
+
+
+def patch_make_dataset_for_local_shards(train_module, repo_ids: list[str], dataset_root: Path) -> None:
+    def _patched_make_dataset(cfg):
+        del cfg
+        dataset = MultiLocalLeRobotDataset(repo_ids=repo_ids, dataset_root=dataset_root)
+        print(
+            "Using multi-shard local LeRobot dataset: "
+            f"{len(dataset.datasets)} shards, {dataset.num_episodes} episodes, {dataset.num_frames} frames"
+        )
+        return dataset
+
+    train_module.make_dataset = _patched_make_dataset
+    try:
+        dataset_factory_module = importlib.import_module("lerobot.datasets.factory")
+        dataset_factory_module.make_dataset = _patched_make_dataset
+    except ModuleNotFoundError:
+        pass
+
+
 def build_command(args: argparse.Namespace) -> list[str]:
     model_family = canonicalize_model_family(args.model_family)
     if model_family not in DEFAULT_PRETRAINED_PATHS:
@@ -240,11 +441,30 @@ def build_command(args: argparse.Namespace) -> list[str]:
 
 def main() -> None:
     args = parse_args()
-    command = build_command(args)
+    repo_ids = parse_dataset_repo_ids(args.dataset_repo_id)
+
+    command_args = args
+    if len(repo_ids) > 1:
+        command_args = copy.copy(args)
+        command_args.dataset_repo_id = repo_ids[0]
+        command_args.dataset_root = str(resolve_local_dataset_root(Path(args.dataset_root), repo_ids[0]))
+
+    command = build_command(command_args)
     print("Resolved LeRobot training command:")
     print(shlex.join(command))
+    if len(repo_ids) > 1:
+        print("Multi-shard local datasets:")
+        for repo_id in repo_ids:
+            print(f"  - {repo_id}")
 
     if args.dry_run:
+        return
+
+    if len(repo_ids) > 1:
+        train_module = import_lerobot_train_module()
+        patch_make_dataset_for_local_shards(train_module, repo_ids, Path(args.dataset_root))
+        sys.argv = command
+        train_module.main()
         return
 
     try:
