@@ -504,6 +504,72 @@ def is_action_batch_key(key) -> bool:
     return key_leaf in {"action", "actions"}
 
 
+def align_short_action_loss_pair(input_tensor, target_tensor, model_label: str, report_state: dict[str, bool]):
+    """Prevent short action windows from broadcasting incorrectly at the PI flow loss."""
+    if not hasattr(input_tensor, "shape") or not hasattr(target_tensor, "shape"):
+        return input_tensor, target_tensor
+
+    input_shape = tuple(int(dim) for dim in input_tensor.shape)
+    target_shape = tuple(int(dim) for dim in target_tensor.shape)
+    if abs(len(input_shape) - len(target_shape)) != 1:
+        return input_tensor, target_tensor
+
+    if len(input_shape) > len(target_shape):
+        longer_tensor, longer_shape = input_tensor, input_shape
+        shorter_shape = target_shape
+        longer_is_input = True
+    else:
+        longer_tensor, longer_shape = target_tensor, target_shape
+        shorter_shape = input_shape
+        longer_is_input = False
+
+    action_like = len(shorter_shape) >= 2 and len(longer_shape) == len(shorter_shape) + 1
+    action_like = action_like and longer_shape[0] == shorter_shape[0]
+    action_like = action_like and longer_shape[-1] == shorter_shape[-1]
+    action_like = action_like and longer_shape[-1] <= 64 and longer_shape[1] <= 8
+    if not action_like:
+        return input_tensor, target_tensor
+
+    collapsed_tensor = longer_tensor[:, 0, ...]
+    if not report_state["reported_loss"]:
+        collapsed_shape = tuple(int(dim) for dim in collapsed_tensor.shape)
+        print(f"Adjusted {model_label} action loss shape: {longer_shape} -> {collapsed_shape}")
+        report_state["reported_loss"] = True
+
+    if longer_is_input:
+        return collapsed_tensor, target_tensor
+    return input_tensor, collapsed_tensor
+
+
+def patch_policy_action_loss_compat(policy_module, model_label: str) -> None:
+    functional_module = getattr(policy_module, "F", None)
+    if functional_module is None or getattr(functional_module, "_robocerebra_action_loss_compat", False):
+        return
+
+    mse_loss = getattr(functional_module, "mse_loss", None)
+    if mse_loss is None:
+        return
+
+    class _FunctionalCompatProxy:
+        _robocerebra_action_loss_compat = True
+
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+            self._state = {"reported_loss": False}
+
+        def __getattr__(self, name):
+            return getattr(self._wrapped, name)
+
+        def mse_loss(self, input_tensor, target_tensor, *args, **kwargs):
+            input_tensor, target_tensor = align_short_action_loss_pair(
+                input_tensor, target_tensor, model_label, self._state
+            )
+            return self._wrapped.mse_loss(input_tensor, target_tensor, *args, **kwargs)
+
+    policy_module.F = _FunctionalCompatProxy(functional_module)
+    print(f"Applied {model_label} action-loss compatibility patch.")
+
+
 def patch_policy_text_mask_compat(model_family: str) -> None:
     """Trim policy text padding when tokenizer ids and masks disagree."""
     model_label = "PI0.5" if model_family == "pi05" else model_family.upper()
@@ -511,6 +577,8 @@ def patch_policy_text_mask_compat(model_family: str) -> None:
         policy_module = importlib.import_module(f"lerobot.policies.{model_family}.modeling_{model_family}")
     except ModuleNotFoundError:
         return
+
+    patch_policy_action_loss_compat(policy_module, model_label)
 
     for class_object in vars(policy_module).values():
         if not isinstance(class_object, type):
@@ -621,8 +689,7 @@ def patch_policy_text_mask_compat(model_family: str) -> None:
                 args[__action_arg_index] = collapse_short_action_window(
                     args[__action_arg_index], __model_label, __state
                 )
-            else:
-                args = [collapse_short_action_window(arg, __model_label, __state) for arg in args]
+            args = [collapse_short_action_window(arg, __model_label, __state) for arg in args]
             return __original_forward(self, *args, **kwargs)
 
         _forward_with_token_mask_compat._robocerebra_token_mask_compat = True
