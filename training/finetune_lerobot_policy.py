@@ -515,30 +515,33 @@ def align_short_action_loss_pair(input_tensor, target_tensor, model_label: str, 
         return input_tensor, target_tensor
 
     if len(input_shape) > len(target_shape):
-        longer_tensor, longer_shape = input_tensor, input_shape
-        shorter_shape = target_shape
-        longer_is_input = True
+        longer_shape = input_shape
+        shorter_tensor, shorter_shape = target_tensor, target_shape
+        shorter_is_input = False
     else:
-        longer_tensor, longer_shape = target_tensor, target_shape
-        shorter_shape = input_shape
-        longer_is_input = False
+        longer_shape = target_shape
+        shorter_tensor, shorter_shape = input_tensor, input_shape
+        shorter_is_input = True
 
     action_like = len(shorter_shape) >= 2 and len(longer_shape) == len(shorter_shape) + 1
     action_like = action_like and longer_shape[0] == shorter_shape[0]
     action_like = action_like and longer_shape[-1] == shorter_shape[-1]
     action_like = action_like and longer_shape[-1] <= 64 and longer_shape[1] <= 8
-    if not action_like:
+    if not action_like or not hasattr(shorter_tensor, "unsqueeze"):
         return input_tensor, target_tensor
 
-    collapsed_tensor = longer_tensor[:, 0, ...]
+    adjusted_shorter = shorter_tensor.unsqueeze(1)
     if not report_state["reported_loss"]:
-        collapsed_shape = tuple(int(dim) for dim in collapsed_tensor.shape)
-        print(f"Adjusted {model_label} action loss shape: {longer_shape} -> {collapsed_shape}")
+        adjusted_shape = tuple(int(dim) for dim in adjusted_shorter.shape)
+        print(
+            f"Adjusted {model_label} action loss rank: "
+            f"{shorter_shape} -> {adjusted_shape} against {longer_shape}"
+        )
         report_state["reported_loss"] = True
 
-    if longer_is_input:
-        return collapsed_tensor, target_tensor
-    return input_tensor, collapsed_tensor
+    if shorter_is_input:
+        return adjusted_shorter, target_tensor
+    return input_tensor, adjusted_shorter
 
 
 def patch_policy_action_loss_compat(policy_module, model_label: str) -> None:
