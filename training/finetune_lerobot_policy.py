@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import inspect
 import importlib
 import json
 import shlex
@@ -460,6 +461,76 @@ def patch_make_dataset_for_local_shards(train_module, repo_ids: list[str], datas
         pass
 
 
+def patch_pi05_token_mask_compat() -> None:
+    """Pad PI0.5 text masks when tokenizer outputs fixed-size token ids only."""
+    try:
+        modeling_pi05 = importlib.import_module("lerobot.policies.pi05.modeling_pi05")
+    except ModuleNotFoundError:
+        return
+
+    patched_classes = []
+    for class_name, class_object in vars(modeling_pi05).items():
+        if not isinstance(class_object, type):
+            continue
+
+        forward = getattr(class_object, "forward", None)
+        if forward is None or getattr(forward, "_robocerebra_token_mask_compat", False):
+            continue
+
+        try:
+            parameter_names = list(inspect.signature(forward).parameters)
+        except (TypeError, ValueError):
+            continue
+        if (
+            len(parameter_names) < 6
+            or parameter_names[0] != "self"
+            or parameter_names[1:3] != ["images", "img_masks"]
+            or parameter_names[5] != "actions"
+        ):
+            continue
+
+        original_forward = forward
+
+        def _forward_with_token_mask_compat(
+            self,
+            images,
+            img_masks,
+            tokens,
+            masks,
+            actions,
+            *args,
+            __original_forward=original_forward,
+            **kwargs,
+        ):
+            if (
+                hasattr(tokens, "shape")
+                and hasattr(masks, "shape")
+                and len(tokens.shape) > 0
+                and len(masks.shape) > 0
+                and tokens.shape[-1] != masks.shape[-1]
+            ):
+                token_length = int(tokens.shape[-1])
+                mask_length = int(masks.shape[-1])
+                if mask_length < token_length:
+                    import torch
+
+                    pad_shape = list(masks.shape)
+                    pad_shape[-1] = token_length - mask_length
+                    masks = torch.cat((masks, masks.new_zeros(pad_shape)), dim=-1)
+                else:
+                    masks = masks[..., :token_length]
+            return __original_forward(self, images, img_masks, tokens, masks, actions, *args, **kwargs)
+
+        _forward_with_token_mask_compat._robocerebra_token_mask_compat = True
+        setattr(class_object, "forward", _forward_with_token_mask_compat)
+        patched_classes.append(class_name)
+
+    if patched_classes:
+        print("Applied PI0.5 token/mask compatibility patch to: " + ", ".join(sorted(patched_classes)))
+    else:
+        print("WARNING: Could not locate a PI0.5 model forward method for token/mask compatibility patch.")
+
+
 def build_command(args: argparse.Namespace) -> list[str]:
     model_family = canonicalize_model_family(args.model_family)
     if model_family not in DEFAULT_PRETRAINED_PATHS:
@@ -528,6 +599,8 @@ def main() -> None:
     if len(repo_ids) > 1:
         train_module = import_lerobot_train_module()
         patch_make_dataset_for_local_shards(train_module, repo_ids, Path(args.dataset_root))
+        if canonicalize_model_family(args.model_family) == "pi05":
+            patch_pi05_token_mask_compat()
         sys.argv = command
         train_module.main()
         return
