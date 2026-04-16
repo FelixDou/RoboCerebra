@@ -196,29 +196,57 @@ def make_output_dataset(args: argparse.Namespace):
     return create_lerobot_dataset(args, features)
 
 
-def copy_episode(target_dataset, source_dataset, episode_index: int) -> tuple[int, str | None]:
-    frame_indices = source_dataset.episode_data_index
-    starts = frame_indices["from"]
-    ends = frame_indices["to"]
+def add_sample_frame(target_dataset, sample) -> int:
+    task = normalize_task(sample.get("task", ""))
+    frame = {
+        "observation.images.image": normalize_image(sample["observation.images.image"]),
+        "observation.images.wrist_image": normalize_image(sample["observation.images.wrist_image"]),
+        "observation.state": normalize_vector(sample["observation.state"], STATE_SHAPE, "state"),
+        "action": normalize_vector(sample["action"], ACTION_SHAPE, "action"),
+    }
+    add_frame_compat(target_dataset, frame, task)
+    return 1
 
-    start = scalar_to_int(starts[episode_index])
-    end = scalar_to_int(ends[episode_index])
-    task = None
 
-    for sample_index in range(start, end):
+def copy_source_dataset(
+    target_dataset,
+    source_dataset,
+    max_episodes: int | None,
+    completed_episodes: int,
+) -> tuple[int, int]:
+    total_episodes = 0
+    total_frames = 0
+    current_episode_index = None
+    pending_frames = 0
+
+    sample_indices = range(len(source_dataset))
+    if tqdm is not None:
+        sample_indices = tqdm(sample_indices, desc="Merging frames", unit="frame")
+
+    for sample_index in sample_indices:
         sample = source_dataset[sample_index]
-        task = normalize_task(sample.get("task", task or ""))
-        frame = {
-            "observation.images.image": normalize_image(sample["observation.images.image"]),
-            "observation.images.wrist_image": normalize_image(sample["observation.images.wrist_image"]),
-            "observation.state": normalize_vector(sample["observation.state"], STATE_SHAPE, "state"),
-            "action": normalize_vector(sample["action"], ACTION_SHAPE, "action"),
-        }
-        add_frame_compat(target_dataset, frame, task)
+        episode_index = scalar_to_int(sample["episode_index"])
 
-    if end > start:
+        if current_episode_index is None:
+            current_episode_index = episode_index
+        elif episode_index != current_episode_index:
+            if pending_frames > 0:
+                target_dataset.save_episode()
+                total_episodes += 1
+                completed_episodes += 1
+                pending_frames = 0
+            if max_episodes is not None and completed_episodes >= max_episodes:
+                return total_episodes, total_frames
+            current_episode_index = episode_index
+
+        total_frames += add_sample_frame(target_dataset, sample)
+        pending_frames += 1
+
+    if pending_frames > 0 and (max_episodes is None or completed_episodes < max_episodes):
         target_dataset.save_episode()
-    return max(0, end - start), task
+        total_episodes += 1
+
+    return total_episodes, total_frames
 
 
 def main() -> None:
@@ -239,24 +267,15 @@ def main() -> None:
         for shard_repo_id in args.shard_repo_id:
             source_root = resolve_local_dataset_root(shards_root, shard_repo_id)
             source_dataset = LeRobotDataset(repo_id=shard_repo_id, root=source_root)
-            num_episodes = int(getattr(source_dataset, "num_episodes", 0))
-
-            episode_indices = range(num_episodes)
-            if tqdm is not None:
-                episode_indices = tqdm(
-                    episode_indices,
-                    desc=f"Merging {source_root.name}",
-                    unit="episode",
-                )
-
-            for episode_index in episode_indices:
-                if args.max_episodes is not None and total_episodes >= args.max_episodes:
-                    break
-                frames, _task = copy_episode(target_dataset, source_dataset, episode_index)
-                if frames == 0:
-                    continue
-                total_episodes += 1
-                total_frames += frames
+            print(f"Merging {source_root.name}: {source_dataset.num_episodes} episodes, {len(source_dataset)} frames")
+            episodes, frames = copy_source_dataset(
+                target_dataset=target_dataset,
+                source_dataset=source_dataset,
+                max_episodes=args.max_episodes,
+                completed_episodes=total_episodes,
+            )
+            total_episodes += episodes
+            total_frames += frames
 
             if args.max_episodes is not None and total_episodes >= args.max_episodes:
                 break
