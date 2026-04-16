@@ -475,6 +475,23 @@ def trim_last_dim_pair(left, right):
     return left, right
 
 
+def collapse_short_action_window(actions, model_label: str, report_state: dict[str, bool]):
+    if not hasattr(actions, "shape") or len(actions.shape) < 3:
+        return actions
+
+    shape = tuple(int(dim) for dim in actions.shape)
+    short_window = len(shape) == 3 and shape[1] <= 8
+    nested_short_window = len(shape) == 4 and shape[1] <= 8
+    if not short_window and not nested_short_window:
+        return actions
+
+    collapsed_actions = actions[:, 0, ...]
+    if not report_state["reported_action"]:
+        print(f"Adjusted {model_label} action shape: {shape} -> {tuple(int(dim) for dim in collapsed_actions.shape)}")
+        report_state["reported_action"] = True
+    return collapsed_actions
+
+
 def patch_policy_text_mask_compat(model_family: str) -> None:
     """Trim policy text padding when tokenizer ids and masks disagree."""
     model_label = "PI0.5" if model_family == "pi05" else model_family.upper()
@@ -509,6 +526,8 @@ def patch_policy_text_mask_compat(model_family: str) -> None:
         token_name, mask_name = token_mask_pair
         token_arg_index = parameter_names.index(token_name) - 1
         mask_arg_index = parameter_names.index(mask_name) - 1
+        action_arg_index = parameter_names.index("actions") - 1 if "actions" in parameter_names else None
+        state = {"reported_action": False}
 
         def _forward_with_token_mask_compat(
             self,
@@ -516,8 +535,11 @@ def patch_policy_text_mask_compat(model_family: str) -> None:
             __original_forward=original_forward,
             __token_arg_index=token_arg_index,
             __mask_arg_index=mask_arg_index,
+            __action_arg_index=action_arg_index,
             __token_name=token_name,
             __mask_name=mask_name,
+            __model_label=model_label,
+            __state=state,
             **kwargs,
         ):
             args = list(args)
@@ -528,6 +550,12 @@ def patch_policy_text_mask_compat(model_family: str) -> None:
             elif __token_arg_index < len(args) and __mask_arg_index < len(args):
                 args[__token_arg_index], args[__mask_arg_index] = trim_last_dim_pair(
                     args[__token_arg_index], args[__mask_arg_index]
+                )
+            if "actions" in kwargs:
+                kwargs["actions"] = collapse_short_action_window(kwargs["actions"], __model_label, __state)
+            elif __action_arg_index is not None and __action_arg_index < len(args):
+                args[__action_arg_index] = collapse_short_action_window(
+                    args[__action_arg_index], __model_label, __state
                 )
             return __original_forward(self, *args, **kwargs)
 
