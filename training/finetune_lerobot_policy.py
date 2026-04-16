@@ -493,6 +493,17 @@ def collapse_short_action_window(actions, model_label: str, report_state: dict[s
     return collapsed_actions
 
 
+def is_action_batch_key(key) -> bool:
+    """Match plain or enum-like action keys while avoiding pad/mask fields."""
+    key_value = getattr(key, "value", key)
+    key_text = str(key_value).strip().strip("'\"").lower()
+    if "mask" in key_text or "pad" in key_text:
+        return False
+
+    key_leaf = key_text.replace("]", "").split("[")[-1].rsplit("/", 1)[-1].rsplit(".", 1)[-1].strip("'\"")
+    return key_leaf in {"action", "actions"}
+
+
 def patch_policy_text_mask_compat(model_family: str) -> None:
     """Trim policy text padding when tokenizer ids and masks disagree."""
     model_label = "PI0.5" if model_family == "pi05" else model_family.upper()
@@ -500,6 +511,52 @@ def patch_policy_text_mask_compat(model_family: str) -> None:
         policy_module = importlib.import_module(f"lerobot.policies.{model_family}.modeling_{model_family}")
     except ModuleNotFoundError:
         return
+
+    for class_object in vars(policy_module).values():
+        if not isinstance(class_object, type):
+            continue
+
+        forward = getattr(class_object, "forward", None)
+        if forward is None or getattr(forward, "_robocerebra_batch_action_compat", False):
+            continue
+
+        try:
+            parameter_names = list(inspect.signature(forward).parameters)
+        except (TypeError, ValueError):
+            continue
+        if parameter_names[:2] != ["self", "batch"]:
+            continue
+
+        original_forward = forward
+        state = {"reported_action": False}
+
+        def _forward_with_batch_action_compat(
+            self,
+            batch,
+            *args,
+            __original_forward=original_forward,
+            __model_label=model_label,
+            __state=state,
+            **kwargs,
+        ):
+            if isinstance(batch, dict):
+                adjusted_batch = batch
+                for batch_key, batch_value in batch.items():
+                    if not is_action_batch_key(batch_key):
+                        continue
+
+                    adjusted_action = collapse_short_action_window(batch_value, __model_label, __state)
+                    if adjusted_action is batch_value:
+                        continue
+
+                    if adjusted_batch is batch:
+                        adjusted_batch = dict(batch)
+                    adjusted_batch[batch_key] = adjusted_action
+                batch = adjusted_batch
+            return __original_forward(self, batch, *args, **kwargs)
+
+        _forward_with_batch_action_compat._robocerebra_batch_action_compat = True
+        setattr(class_object, "forward", _forward_with_batch_action_compat)
 
     patched_classes = []
     for class_name, class_object in vars(policy_module).items():
