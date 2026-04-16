@@ -461,15 +461,30 @@ def patch_make_dataset_for_local_shards(train_module, repo_ids: list[str], datas
         pass
 
 
-def patch_pi05_token_mask_compat() -> None:
-    """Trim PI0.5 text padding when tokenizer ids and masks disagree."""
+def trim_last_dim_pair(left, right):
+    if (
+        hasattr(left, "shape")
+        and hasattr(right, "shape")
+        and len(left.shape) > 0
+        and len(right.shape) > 0
+        and left.shape[-1] != right.shape[-1]
+    ):
+        target_length = min(int(left.shape[-1]), int(right.shape[-1]))
+        left = left[..., :target_length]
+        right = right[..., :target_length]
+    return left, right
+
+
+def patch_policy_text_mask_compat(model_family: str) -> None:
+    """Trim policy text padding when tokenizer ids and masks disagree."""
+    model_label = "PI0.5" if model_family == "pi05" else model_family.upper()
     try:
-        modeling_pi05 = importlib.import_module("lerobot.policies.pi05.modeling_pi05")
+        policy_module = importlib.import_module(f"lerobot.policies.{model_family}.modeling_{model_family}")
     except ModuleNotFoundError:
         return
 
     patched_classes = []
-    for class_name, class_object in vars(modeling_pi05).items():
+    for class_name, class_object in vars(policy_module).items():
         if not isinstance(class_object, type):
             continue
 
@@ -481,51 +496,51 @@ def patch_pi05_token_mask_compat() -> None:
             parameter_names = list(inspect.signature(forward).parameters)
         except (TypeError, ValueError):
             continue
-        if (
-            len(parameter_names) < 6
-            or parameter_names[0] != "self"
-            or parameter_names[1:3] != ["images", "img_masks"]
-            or parameter_names[5] != "actions"
-        ):
+
+        token_mask_pair = None
+        for token_name, mask_name in (("tokens", "masks"), ("lang_tokens", "lang_masks")):
+            if token_name in parameter_names and mask_name in parameter_names:
+                token_mask_pair = (token_name, mask_name)
+                break
+        if parameter_names[:1] != ["self"] or token_mask_pair is None:
             continue
 
         original_forward = forward
+        token_name, mask_name = token_mask_pair
+        token_arg_index = parameter_names.index(token_name) - 1
+        mask_arg_index = parameter_names.index(mask_name) - 1
 
         def _forward_with_token_mask_compat(
             self,
-            images,
-            img_masks,
-            tokens,
-            masks,
-            actions,
             *args,
             __original_forward=original_forward,
+            __token_arg_index=token_arg_index,
+            __mask_arg_index=mask_arg_index,
+            __token_name=token_name,
+            __mask_name=mask_name,
             **kwargs,
         ):
-            if (
-                hasattr(tokens, "shape")
-                and hasattr(masks, "shape")
-                and len(tokens.shape) > 0
-                and len(masks.shape) > 0
-                and tokens.shape[-1] != masks.shape[-1]
-            ):
-                token_length = int(tokens.shape[-1])
-                mask_length = int(masks.shape[-1])
-                target_length = min(token_length, mask_length)
-                tokens = tokens[..., :target_length]
-                masks = masks[..., :target_length]
-            return __original_forward(self, images, img_masks, tokens, masks, actions, *args, **kwargs)
+            args = list(args)
+            if __token_name in kwargs and __mask_name in kwargs:
+                kwargs[__token_name], kwargs[__mask_name] = trim_last_dim_pair(
+                    kwargs[__token_name], kwargs[__mask_name]
+                )
+            elif __token_arg_index < len(args) and __mask_arg_index < len(args):
+                args[__token_arg_index], args[__mask_arg_index] = trim_last_dim_pair(
+                    args[__token_arg_index], args[__mask_arg_index]
+                )
+            return __original_forward(self, *args, **kwargs)
 
         _forward_with_token_mask_compat._robocerebra_token_mask_compat = True
         setattr(class_object, "forward", _forward_with_token_mask_compat)
         patched_classes.append(class_name)
 
     if patched_classes:
-        print("Applied PI0.5 token/mask compatibility patch to: " + ", ".join(sorted(patched_classes)))
+        print(f"Applied {model_label} token/mask compatibility patch to: " + ", ".join(sorted(patched_classes)))
     else:
-        print("WARNING: Could not locate a PI0.5 model forward method for token/mask compatibility patch.")
+        print(f"WARNING: Could not locate a {model_label} model forward method for token/mask compatibility patch.")
 
-    make_att_2d_masks = getattr(modeling_pi05, "make_att_2d_masks", None)
+    make_att_2d_masks = getattr(policy_module, "make_att_2d_masks", None)
     if make_att_2d_masks is None or getattr(make_att_2d_masks, "_robocerebra_token_mask_compat", False):
         return
 
@@ -542,22 +557,20 @@ def patch_pi05_token_mask_compat() -> None:
         ):
             pad_length = int(pad_masks.shape[-1])
             att_length = int(att_masks.shape[-1])
-            target_length = min(pad_length, att_length)
-            pad_masks = pad_masks[..., :target_length]
-            att_masks = att_masks[..., :target_length]
+            pad_masks, att_masks = trim_last_dim_pair(pad_masks, att_masks)
 
             if not state["reported"]:
                 print(
-                    "Adjusted PI0.5 attention mask lengths: "
-                    f"pad={pad_length}, att={att_length}, target={target_length}"
+                    f"Adjusted {model_label} attention mask lengths: "
+                    f"pad={pad_length}, att={att_length}, target={int(pad_masks.shape[-1])}"
                 )
                 state["reported"] = True
 
         return make_att_2d_masks(pad_masks, att_masks)
 
     _make_att_2d_masks_with_token_mask_compat._robocerebra_token_mask_compat = True
-    modeling_pi05.make_att_2d_masks = _make_att_2d_masks_with_token_mask_compat
-    print("Applied PI0.5 2D attention-mask compatibility patch.")
+    policy_module.make_att_2d_masks = _make_att_2d_masks_with_token_mask_compat
+    print(f"Applied {model_label} 2D attention-mask compatibility patch.")
 
 
 def build_command(args: argparse.Namespace) -> list[str]:
@@ -628,8 +641,9 @@ def main() -> None:
     if len(repo_ids) > 1:
         train_module = import_lerobot_train_module()
         patch_make_dataset_for_local_shards(train_module, repo_ids, Path(args.dataset_root))
-        if canonicalize_model_family(args.model_family) == "pi05":
-            patch_pi05_token_mask_compat()
+        model_family = canonicalize_model_family(args.model_family)
+        if model_family in {"pi0", "pi05"}:
+            patch_policy_text_mask_compat(model_family)
         sys.argv = command
         train_module.main()
         return
