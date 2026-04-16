@@ -462,7 +462,7 @@ def patch_make_dataset_for_local_shards(train_module, repo_ids: list[str], datas
 
 
 def patch_pi05_token_mask_compat() -> None:
-    """Pad PI0.5 text masks when tokenizer outputs fixed-size token ids only."""
+    """Pad PI0.5 masks when tokenizer outputs fixed-size token ids only."""
     try:
         modeling_pi05 = importlib.import_module("lerobot.policies.pi05.modeling_pi05")
     except ModuleNotFoundError:
@@ -529,6 +529,49 @@ def patch_pi05_token_mask_compat() -> None:
         print("Applied PI0.5 token/mask compatibility patch to: " + ", ".join(sorted(patched_classes)))
     else:
         print("WARNING: Could not locate a PI0.5 model forward method for token/mask compatibility patch.")
+
+    make_att_2d_masks = getattr(modeling_pi05, "make_att_2d_masks", None)
+    if make_att_2d_masks is None or getattr(make_att_2d_masks, "_robocerebra_token_mask_compat", False):
+        return
+
+    state = {"reported": False}
+
+    def _make_att_2d_masks_with_token_mask_compat(pad_masks, att_masks):
+        if (
+            att_masks is not None
+            and hasattr(pad_masks, "shape")
+            and hasattr(att_masks, "shape")
+            and len(pad_masks.shape) > 0
+            and len(att_masks.shape) > 0
+            and pad_masks.shape[-1] != att_masks.shape[-1]
+        ):
+            import torch
+
+            pad_length = int(pad_masks.shape[-1])
+            att_length = int(att_masks.shape[-1])
+            target_length = max(pad_length, att_length)
+
+            if pad_length < target_length:
+                pad_shape = list(pad_masks.shape)
+                pad_shape[-1] = target_length - pad_length
+                pad_masks = torch.cat((pad_masks, pad_masks.new_zeros(pad_shape)), dim=-1)
+            if att_length < target_length:
+                pad_shape = list(att_masks.shape)
+                pad_shape[-1] = target_length - att_length
+                att_masks = torch.cat((att_masks, att_masks.new_zeros(pad_shape)), dim=-1)
+
+            if not state["reported"]:
+                print(
+                    "Adjusted PI0.5 attention mask lengths: "
+                    f"pad={pad_length}, att={att_length}, target={target_length}"
+                )
+                state["reported"] = True
+
+        return make_att_2d_masks(pad_masks, att_masks)
+
+    _make_att_2d_masks_with_token_mask_compat._robocerebra_token_mask_compat = True
+    modeling_pi05.make_att_2d_masks = _make_att_2d_masks_with_token_mask_compat
+    print("Applied PI0.5 2D attention-mask compatibility patch.")
 
 
 def build_command(args: argparse.Namespace) -> list[str]:
