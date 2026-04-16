@@ -229,6 +229,44 @@ def resolve_local_dataset_root(base_root: Path, repo_id: str) -> Path:
     return base_root / repo_id
 
 
+def read_lerobot_dataset_counts(dataset_root: Path) -> tuple[int | None, int | None]:
+    info_path = dataset_root / "meta" / "info.json"
+    total_frames = None
+    total_episodes = None
+
+    if info_path.is_file():
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        for key in ("total_frames", "num_frames"):
+            if key in info:
+                total_frames = int(info[key])
+                break
+        for key in ("total_episodes", "num_episodes"):
+            if key in info:
+                total_episodes = int(info[key])
+                break
+
+    episodes_path = dataset_root / "meta" / "episodes.jsonl"
+    if episodes_path.is_file() and (total_frames is None or total_episodes is None):
+        inferred_frames = 0
+        inferred_episodes = 0
+        with episodes_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                inferred_episodes += 1
+                row = json.loads(line)
+                for key in ("length", "num_frames", "episode_length"):
+                    if key in row:
+                        inferred_frames += int(row[key])
+                        break
+        if total_episodes is None:
+            total_episodes = inferred_episodes
+        if total_frames is None and inferred_frames > 0:
+            total_frames = inferred_frames
+
+    return total_frames, total_episodes
+
+
 def import_lerobot_train_module():
     repo_lerobot_src = Path(__file__).resolve().parents[1] / "lerobot" / "src"
     if repo_lerobot_src.is_dir() and str(repo_lerobot_src) not in sys.path:
@@ -317,35 +355,66 @@ class MultiLocalLeRobotDataset:
     def __init__(self, repo_ids: list[str], dataset_root: Path) -> None:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
+        self._dataset_cls = LeRobotDataset
         self.repo_ids = list(repo_ids)
         self.root = Path(dataset_root).expanduser().resolve()
-        self.datasets = []
+        self.datasets = [None] * len(self.repo_ids)
         self.dataset_roots = []
+        self.shard_num_frames = []
+        self.shard_num_episodes = []
 
         for repo_id in self.repo_ids:
             local_root = resolve_local_dataset_root(self.root, repo_id)
-            self.datasets.append(LeRobotDataset(repo_id=repo_id, root=local_root))
             self.dataset_roots.append(local_root)
 
-        if not self.datasets:
+            shard_frames, shard_episodes = read_lerobot_dataset_counts(local_root)
+            self.shard_num_frames.append(shard_frames)
+            self.shard_num_episodes.append(shard_episodes)
+
+        if not self.repo_ids:
             raise ValueError("No local LeRobot shards were loaded.")
+
+        first_dataset = self._load_dataset(0)
+        if self.shard_num_frames[0] is None:
+            self.shard_num_frames[0] = len(first_dataset)
+        if self.shard_num_episodes[0] is None:
+            self.shard_num_episodes[0] = int(getattr(first_dataset, "num_episodes", 0))
+
+        missing_count_indices = [
+            index for index, frame_count in enumerate(self.shard_num_frames) if frame_count is None
+        ]
+        if missing_count_indices:
+            for index in missing_count_indices:
+                dataset = self._load_dataset(index)
+                self.shard_num_frames[index] = len(dataset)
+                self.shard_num_episodes[index] = int(getattr(dataset, "num_episodes", 0))
 
         self.cumulative_sizes = []
         running_size = 0
-        for dataset in self.datasets:
-            running_size += len(dataset)
+        for shard_frames in self.shard_num_frames:
+            running_size += int(shard_frames)
             self.cumulative_sizes.append(running_size)
 
-        self.num_frames = sum(int(getattr(dataset, "num_frames", len(dataset))) for dataset in self.datasets)
-        self.num_episodes = sum(int(getattr(dataset, "num_episodes", 0)) for dataset in self.datasets)
+        self.num_frames = sum(int(shard_frames) for shard_frames in self.shard_num_frames)
+        self.num_episodes = sum(int(shard_episodes or 0) for shard_episodes in self.shard_num_episodes)
         try:
-            self.meta = copy.deepcopy(self.datasets[0].meta)
+            self.meta = copy.deepcopy(first_dataset.meta)
         except Exception:
             # Some LeRobot metadata versions carry objects that do not deep-copy
             # cleanly. Reusing the first shard's metadata is still safe because
             # all shards were produced by the same exporter with the same schema.
-            self.meta = self.datasets[0].meta
+            self.meta = first_dataset.meta
         self._patch_meta()
+
+    def _load_dataset(self, dataset_index: int):
+        dataset = self.datasets[dataset_index]
+        if dataset is None:
+            dataset = self._dataset_cls(
+                repo_id=self.repo_ids[dataset_index],
+                root=self.dataset_roots[dataset_index],
+            )
+            self.datasets[dataset_index] = dataset
+        return dataset
 
     def _patch_meta(self) -> None:
         if hasattr(self.meta, "info") and isinstance(self.meta.info, dict):
@@ -359,10 +428,6 @@ class MultiLocalLeRobotDataset:
                 except AttributeError:
                     pass
 
-        merged_stats = merge_weighted_stats(self.datasets)
-        if merged_stats is not None and hasattr(self.meta, "stats"):
-            self.meta.stats = merged_stats
-
     def __len__(self) -> int:
         return self.cumulative_sizes[-1]
 
@@ -374,7 +439,7 @@ class MultiLocalLeRobotDataset:
 
         dataset_index = bisect_right(self.cumulative_sizes, index)
         previous_size = self.cumulative_sizes[dataset_index - 1] if dataset_index > 0 else 0
-        return self.datasets[dataset_index][index - previous_size]
+        return self._load_dataset(dataset_index)[index - previous_size]
 
 
 def patch_make_dataset_for_local_shards(train_module, repo_ids: list[str], dataset_root: Path) -> None:
@@ -383,7 +448,7 @@ def patch_make_dataset_for_local_shards(train_module, repo_ids: list[str], datas
         dataset = MultiLocalLeRobotDataset(repo_ids=repo_ids, dataset_root=dataset_root)
         print(
             "Using multi-shard local LeRobot dataset: "
-            f"{len(dataset.datasets)} shards, {dataset.num_episodes} episodes, {dataset.num_frames} frames"
+            f"{len(dataset.repo_ids)} shards, {dataset.num_episodes} episodes, {dataset.num_frames} frames"
         )
         return dataset
 
