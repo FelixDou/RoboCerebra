@@ -462,7 +462,7 @@ def patch_make_dataset_for_local_shards(train_module, repo_ids: list[str], datas
 
 
 def patch_pi05_token_mask_compat() -> None:
-    """Pad PI0.5 masks when tokenizer outputs fixed-size token ids only."""
+    """Trim PI0.5 text padding when tokenizer ids and masks disagree."""
     try:
         modeling_pi05 = importlib.import_module("lerobot.policies.pi05.modeling_pi05")
     except ModuleNotFoundError:
@@ -511,14 +511,9 @@ def patch_pi05_token_mask_compat() -> None:
             ):
                 token_length = int(tokens.shape[-1])
                 mask_length = int(masks.shape[-1])
-                if mask_length < token_length:
-                    import torch
-
-                    pad_shape = list(masks.shape)
-                    pad_shape[-1] = token_length - mask_length
-                    masks = torch.cat((masks, masks.new_zeros(pad_shape)), dim=-1)
-                else:
-                    masks = masks[..., :token_length]
+                target_length = min(token_length, mask_length)
+                tokens = tokens[..., :target_length]
+                masks = masks[..., :target_length]
             return __original_forward(self, images, img_masks, tokens, masks, actions, *args, **kwargs)
 
         _forward_with_token_mask_compat._robocerebra_token_mask_compat = True
@@ -545,20 +540,11 @@ def patch_pi05_token_mask_compat() -> None:
             and len(att_masks.shape) > 0
             and pad_masks.shape[-1] != att_masks.shape[-1]
         ):
-            import torch
-
             pad_length = int(pad_masks.shape[-1])
             att_length = int(att_masks.shape[-1])
-            target_length = max(pad_length, att_length)
-
-            if pad_length < target_length:
-                pad_shape = list(pad_masks.shape)
-                pad_shape[-1] = target_length - pad_length
-                pad_masks = torch.cat((pad_masks, pad_masks.new_zeros(pad_shape)), dim=-1)
-            if att_length < target_length:
-                pad_shape = list(att_masks.shape)
-                pad_shape[-1] = target_length - att_length
-                att_masks = torch.cat((att_masks, att_masks.new_zeros(pad_shape)), dim=-1)
+            target_length = min(pad_length, att_length)
+            pad_masks = pad_masks[..., :target_length]
+            att_masks = att_masks[..., :target_length]
 
             if not state["reported"]:
                 print(
