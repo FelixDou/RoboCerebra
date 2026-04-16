@@ -353,12 +353,13 @@ def merge_weighted_stats(datasets):
 class MultiLocalLeRobotDataset:
     """Present several local LeRobotDataset shards as one map-style dataset."""
 
-    def __init__(self, repo_ids: list[str], dataset_root: Path) -> None:
+    def __init__(self, repo_ids: list[str], dataset_root: Path, dataset_kwargs: dict[str, object] | None = None) -> None:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
         self._dataset_cls = LeRobotDataset
         self.repo_ids = list(repo_ids)
         self.root = Path(dataset_root).expanduser().resolve()
+        self.dataset_kwargs = dict(dataset_kwargs or {})
         self.datasets = [None] * len(self.repo_ids)
         self.dataset_roots = []
         self.shard_num_frames = []
@@ -405,14 +406,17 @@ class MultiLocalLeRobotDataset:
             # cleanly. Reusing the first shard's metadata is still safe because
             # all shards were produced by the same exporter with the same schema.
             self.meta = first_dataset.meta
+        self._merge_meta_stats()
         self._patch_meta()
 
     def _load_dataset(self, dataset_index: int):
         dataset = self.datasets[dataset_index]
         if dataset is None:
+            dataset_kwargs = filter_kwargs_for_callable(self._dataset_cls, self.dataset_kwargs)
             dataset = self._dataset_cls(
                 repo_id=self.repo_ids[dataset_index],
                 root=self.dataset_roots[dataset_index],
+                **dataset_kwargs,
             )
             self.datasets[dataset_index] = dataset
         return dataset
@@ -429,6 +433,23 @@ class MultiLocalLeRobotDataset:
                 except AttributeError:
                     pass
 
+    def _merge_meta_stats(self) -> None:
+        try:
+            merged_stats = merge_weighted_stats([self._load_dataset(index) for index in range(len(self.repo_ids))])
+        except ImportError as exc:
+            print(f"WARNING: Could not merge per-shard normalization stats: {exc}")
+            return
+
+        if merged_stats is None:
+            print("WARNING: Could not merge per-shard normalization stats; using first shard stats.")
+            return
+
+        try:
+            self.meta.stats = merged_stats
+            print(f"Merged normalization stats across {len(self.repo_ids)} local shards.")
+        except AttributeError:
+            print("WARNING: Dataset metadata stats are read-only; using first shard stats.")
+
     def __len__(self) -> int:
         return self.cumulative_sizes[-1]
 
@@ -443,10 +464,125 @@ class MultiLocalLeRobotDataset:
         return self._load_dataset(dataset_index)[index - previous_size]
 
 
+def filter_kwargs_for_callable(callable_object, kwargs: dict[str, object]) -> dict[str, object]:
+    try:
+        signature = inspect.signature(callable_object)
+    except (TypeError, ValueError):
+        return dict(kwargs)
+
+    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
+        return dict(kwargs)
+    return {key: value for key, value in kwargs.items() if key in signature.parameters}
+
+
+def import_lerobot_dataset_metadata_class():
+    module_candidates = (
+        "lerobot.datasets.dataset_metadata",
+        "lerobot.datasets.lerobot_dataset",
+    )
+    for module_name in module_candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        metadata_class = getattr(module, "LeRobotDatasetMetadata", None)
+        if metadata_class is not None:
+            return metadata_class
+    raise ModuleNotFoundError("Could not import LeRobotDatasetMetadata from the installed LeRobot package.")
+
+
+def make_image_transforms(image_transforms_cfg):
+    if image_transforms_cfg is None or not getattr(image_transforms_cfg, "enable", False):
+        return None
+
+    module_candidates = ("lerobot.transforms", "lerobot.datasets.transforms")
+    for module_name in module_candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        image_transforms_class = getattr(module, "ImageTransforms", None)
+        if image_transforms_class is not None:
+            return image_transforms_class(image_transforms_cfg)
+
+    print("WARNING: Could not import LeRobot ImageTransforms; continuing without image transforms.")
+    return None
+
+
+def make_local_shard_dataset_kwargs(cfg, repo_ids: list[str], dataset_root: Path) -> dict[str, object]:
+    dataset_cfg = cfg.dataset
+    dataset_kwargs = {
+        "episodes": getattr(dataset_cfg, "episodes", None),
+        "image_transforms": make_image_transforms(getattr(dataset_cfg, "image_transforms", None)),
+        "revision": getattr(dataset_cfg, "revision", None),
+        "video_backend": getattr(dataset_cfg, "video_backend", None),
+        "tolerance_s": getattr(cfg, "tolerance_s", None),
+    }
+
+    dataset_kwargs = {key: value for key, value in dataset_kwargs.items() if value is not None}
+
+    try:
+        dataset_factory_module = importlib.import_module("lerobot.datasets.factory")
+        resolve_delta_timestamps = getattr(dataset_factory_module, "resolve_delta_timestamps")
+        metadata_class = import_lerobot_dataset_metadata_class()
+        first_repo_id = repo_ids[0]
+        first_root = resolve_local_dataset_root(dataset_root, first_repo_id)
+        metadata_kwargs = {
+            "repo_id": first_repo_id,
+            "root": first_root,
+            "revision": getattr(dataset_cfg, "revision", None),
+        }
+        metadata = metadata_class(**filter_kwargs_for_callable(metadata_class, metadata_kwargs))
+        delta_timestamps = resolve_delta_timestamps(cfg.policy, metadata)
+    except Exception as exc:
+        print(f"WARNING: Could not resolve policy delta_timestamps for local shards: {exc}")
+        delta_timestamps = None
+
+    if delta_timestamps is not None:
+        dataset_kwargs["delta_timestamps"] = delta_timestamps
+        action_timestamps = delta_timestamps.get("action") if isinstance(delta_timestamps, dict) else None
+        if action_timestamps is not None:
+            print(
+                "Resolved multi-shard action delta_timestamps: "
+                f"len={len(action_timestamps)} first={action_timestamps[0]} last={action_timestamps[-1]}"
+            )
+        else:
+            print(f"Resolved multi-shard delta_timestamps keys: {sorted(delta_timestamps)}")
+    else:
+        print("Resolved multi-shard delta_timestamps: None")
+
+    return dataset_kwargs
+
+
+def apply_imagenet_stats_if_requested(dataset, cfg) -> None:
+    if not getattr(cfg.dataset, "use_imagenet_stats", False):
+        return
+
+    try:
+        import torch
+        from lerobot.utils.constants import IMAGENET_STATS
+    except (ImportError, ModuleNotFoundError) as exc:
+        print(f"WARNING: Could not apply ImageNet camera stats: {exc}")
+        return
+
+    camera_keys = getattr(dataset.meta, "camera_keys", [])
+    stats = getattr(dataset.meta, "stats", None)
+    if not camera_keys or stats is None:
+        return
+
+    for key in camera_keys:
+        if key not in stats:
+            continue
+        for stats_type, values in IMAGENET_STATS.items():
+            stats[key][stats_type] = torch.tensor(values, dtype=torch.float32)
+    print(f"Applied ImageNet camera stats to {len(camera_keys)} camera features.")
+
+
 def patch_make_dataset_for_local_shards(train_module, repo_ids: list[str], dataset_root: Path) -> None:
     def _patched_make_dataset(cfg):
-        del cfg
-        dataset = MultiLocalLeRobotDataset(repo_ids=repo_ids, dataset_root=dataset_root)
+        dataset_kwargs = make_local_shard_dataset_kwargs(cfg, repo_ids, dataset_root)
+        dataset = MultiLocalLeRobotDataset(repo_ids=repo_ids, dataset_root=dataset_root, dataset_kwargs=dataset_kwargs)
+        apply_imagenet_stats_if_requested(dataset, cfg)
         print(
             "Using multi-shard local LeRobot dataset: "
             f"{len(dataset.repo_ids)} shards, {dataset.num_episodes} episodes, {dataset.num_frames} frames"
