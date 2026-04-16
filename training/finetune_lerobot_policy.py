@@ -554,14 +554,35 @@ def make_local_shard_dataset_kwargs(cfg, repo_ids: list[str], dataset_root: Path
     return dataset_kwargs
 
 
+def get_imagenet_stats():
+    try:
+        import torch
+    except ImportError as exc:
+        raise ImportError("torch is required to apply ImageNet camera stats.") from exc
+
+    for module_name in ("lerobot.datasets.factory", "lerobot.utils.constants"):
+        try:
+            module = importlib.import_module(module_name)
+        except ModuleNotFoundError:
+            continue
+        imagenet_stats = getattr(module, "IMAGENET_STATS", None)
+        if imagenet_stats is not None:
+            return imagenet_stats
+
+    return {
+        "mean": torch.tensor([[[0.485]], [[0.456]], [[0.406]]], dtype=torch.float32),
+        "std": torch.tensor([[[0.229]], [[0.224]], [[0.225]]], dtype=torch.float32),
+    }
+
+
 def apply_imagenet_stats_if_requested(dataset, cfg) -> None:
     if not getattr(cfg.dataset, "use_imagenet_stats", False):
         return
 
     try:
         import torch
-        from lerobot.utils.constants import IMAGENET_STATS
-    except (ImportError, ModuleNotFoundError) as exc:
+        imagenet_stats = get_imagenet_stats()
+    except ImportError as exc:
         print(f"WARNING: Could not apply ImageNet camera stats: {exc}")
         return
 
@@ -573,8 +594,11 @@ def apply_imagenet_stats_if_requested(dataset, cfg) -> None:
     for key in camera_keys:
         if key not in stats:
             continue
-        for stats_type, values in IMAGENET_STATS.items():
-            stats[key][stats_type] = torch.tensor(values, dtype=torch.float32)
+        for stats_type, values in imagenet_stats.items():
+            if isinstance(values, torch.Tensor):
+                stats[key][stats_type] = values.detach().clone().to(dtype=torch.float32)
+            else:
+                stats[key][stats_type] = torch.tensor(values, dtype=torch.float32)
     print(f"Applied ImageNet camera stats to {len(camera_keys)} camera features.")
 
 
