@@ -58,6 +58,28 @@ python eval_openvla.py
 CUDA_VISIBLE_DEVICES=0 python eval_openvla.py --task_types ["Ideal", "Random_Disturbance"]
 ```
 
+### Checkpoint Sweep
+
+For comparing many checkpoints across multiple RoboCerebra categories, use the sweep launcher:
+
+```bash
+bash evaluation/run_checkpoint_sweep.sh \
+  --bench-root /path/to/RoboCerebraBench \
+  --eval-log-dir /path/to/eval_logs \
+  --rollout-root /path/to/eval_rollouts \
+  --gpu-ids 0,1 \
+  --checkpoint-group pi0libero /path/to/pi0_libero_run 050000,100000,145000,150000 \
+  --checkpoint-group pi0base /path/to/pi0_base_run 050000,100000,150000,180000
+```
+
+The script:
+
+- iterates checkpoints x task categories x trials,
+- round-robins jobs across the provided GPUs,
+- writes per-eval logs and rollout directories,
+- auto-generates a flat CSV summary and a Markdown table,
+- creates `robosuite/macros_private.py` with `FILE_LOGGING_LEVEL = None` to avoid `/tmp/robosuite.log` permission failures on shared cluster nodes.
+
 ### Common Configurations
 
 ```bash

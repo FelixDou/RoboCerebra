@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="940" viewBox="0 0 1600 940">
+<rect width="100%" height="100%" fill="#fbfaf5"/>
+<text x="800" y="64" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="34" font-weight="700" fill="#151515">OpenVLA subtask completion on RoboCerebra</text>
+<text x="800" y="102" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#474747">LIBERO Spatial | Aggregate by evaluation setting</text>
+<text x="800" y="128" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="12" fill="#666">Run: EVAL-libero_spatial-openvla-2026_03_30-16_11_47</text>
+<rect x="110" y="170" width="1400" height="600" rx="18" fill="#ffffff" stroke="#ddd8ca"/>
+<line x1="360.0" y1="170" x2="360.0" y2="770" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="360.0" y="802" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#666">0</text>
+<line x1="524.3" y1="170" x2="524.3" y2="770" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="524.3" y="802" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#666">5</text>
+<line x1="688.6" y1="170" x2="688.6" y2="770" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="688.6" y="802" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#666">10</text>
+<line x1="852.9" y1="170" x2="852.9" y2="770" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="852.9" y="802" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#666">15</text>
+<line x1="1017.1" y1="170" x2="1017.1" y2="770" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="1017.1" y="802" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#666">20</text>
+<line x1="1181.4" y1="170" x2="1181.4" y2="770" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="1181.4" y="802" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#666">25</text>
+<line x1="1345.7" y1="170" x2="1345.7" y2="770" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="1345.7" y="802" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#666">30</text>
+<line x1="1510.0" y1="170" x2="1510.0" y2="770" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="1510.0" y="802" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="15" fill="#666">35</text>
+<text x="935.0" y="828" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#333">Completed subtasks / possible subtasks (%)</text>
+<text x="132" y="227.0" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1f1f1f">Memory exec.</text>
+<rect x="360" y="192.0" width="1150.0" height="56.0" rx="8" fill="#efede4"/>
+<rect x="360" y="192.0" width="606.6" height="56.0" rx="8" fill="#E45756"/>
+<text x="980.6" y="227.0" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#1f1f1f">18.5%</text>
+<text x="1058.6" y="227.0" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#555">(96/520)</text>
+<text x="132" y="327.0" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1f1f1f">Mix</text>
+<rect x="360" y="292.0" width="1150.0" height="56.0" rx="8" fill="#efede4"/>
+<rect x="360" y="292.0" width="568.2" height="56.0" rx="8" fill="#F58518"/>
+<text x="942.2" y="327.0" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#1f1f1f">17.3%</text>
+<text x="1020.2" y="327.0" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#555">(83/480)</text>
+<text x="132" y="427.0" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1f1f1f">Random disturb.</text>
+<rect x="360" y="392.0" width="1150.0" height="56.0" rx="8" fill="#efede4"/>
+<rect x="360" y="392.0" width="466.9" height="56.0" rx="8" fill="#B279A2"/>
+<text x="840.9" y="427.0" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#1f1f1f">14.2%</text>
+<text x="918.9" y="427.0" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#555">(54/380)</text>
+<text x="132" y="527.0" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1f1f1f">Memory expl.</text>
+<rect x="360" y="492.0" width="1150.0" height="56.0" rx="8" fill="#efede4"/>
+<rect x="360" y="492.0" width="425.2" height="56.0" rx="8" fill="#72B7B2"/>
+<text x="799.2" y="527.0" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#1f1f1f">12.9%</text>
+<text x="877.2" y="527.0" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#555">(77/595)</text>
+<text x="132" y="627.0" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1f1f1f">Ideal</text>
+<rect x="360" y="592.0" width="1150.0" height="56.0" rx="8" fill="#efede4"/>
+<rect x="360" y="592.0" width="319.9" height="56.0" rx="8" fill="#4C78A8"/>
+<text x="693.9" y="627.0" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#1f1f1f">9.7%</text>
+<text x="771.9" y="627.0" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#555">(37/380)</text>
+<text x="132" y="727.0" font-family="Helvetica, Arial, sans-serif" font-size="24" fill="#1f1f1f">Obs. mismatch</text>
+<rect x="360" y="692.0" width="1150.0" height="56.0" rx="8" fill="#efede4"/>
+<rect x="360" y="692.0" width="248.9" height="56.0" rx="8" fill="#54A24B"/>
+<text x="622.9" y="727.0" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#1f1f1f">7.6%</text>
+<text x="700.9" y="727.0" font-family="Helvetica, Arial, sans-serif" font-size="18" fill="#555">(25/330)</text>
+<text x="110" y="870" font-family="Helvetica, Arial, sans-serif" font-size="22" font-weight="700" fill="#151515">Reading</text>
+<text x="220" y="870" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#333">Higher is better. This slide omits episode success and focuses only on partial task progress.</text>
+</svg>

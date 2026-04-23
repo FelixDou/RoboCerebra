@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="940" viewBox="0 0 1600 940">
+<rect width="100%" height="100%" fill="#fbfaf5"/>
+<text x="800" y="64" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="34" font-weight="700" fill="#151515">pi0.5 fine-tuning checkpoint evolution</text>
+<text x="800" y="102" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="20" fill="#474747">Overall subtask completion on RoboCerebra</text>
+<text x="800" y="130" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#666">Step 0 uses the previous pi0.5 evaluation as the baseline</text>
+<rect x="140" y="175" width="1370" height="590" rx="16" fill="#ffffff" stroke="#ddd8ca"/>
+<line x1="140" y1="765.0" x2="1510" y2="765.0" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="122" y="771.0" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#555">0</text>
+<line x1="140" y1="647.0" x2="1510" y2="647.0" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="122" y="653.0" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#555">5</text>
+<line x1="140" y1="529.0" x2="1510" y2="529.0" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="122" y="535.0" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#555">10</text>
+<line x1="140" y1="411.0" x2="1510" y2="411.0" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="122" y="417.0" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#555">15</text>
+<line x1="140" y1="293.0" x2="1510" y2="293.0" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="122" y="299.0" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#555">20</text>
+<line x1="140" y1="175.0" x2="1510" y2="175.0" stroke="#e8e4d8" stroke-dasharray="5 6"/>
+<text x="122" y="181.0" text-anchor="end" font-family="Helvetica, Arial, sans-serif" font-size="16" fill="#555">25</text>
+<line x1="140.0" y1="175" x2="140.0" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="140.0" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">0</text>
+<line x1="208.5" y1="175" x2="208.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="208.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">5k</text>
+<line x1="277.0" y1="175" x2="277.0" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="277.0" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">10k</text>
+<line x1="345.5" y1="175" x2="345.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="345.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">15k</text>
+<line x1="482.5" y1="175" x2="482.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="482.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">25k</text>
+<line x1="619.5" y1="175" x2="619.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="619.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">35k</text>
+<line x1="688.0" y1="175" x2="688.0" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="688.0" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">40k</text>
+<line x1="756.5" y1="175" x2="756.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="756.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">45k</text>
+<line x1="825.0" y1="175" x2="825.0" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="825.0" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">50k</text>
+<line x1="893.5" y1="175" x2="893.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="893.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">55k</text>
+<line x1="1030.5" y1="175" x2="1030.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="1030.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">65k</text>
+<line x1="1167.5" y1="175" x2="1167.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="1167.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">75k</text>
+<line x1="1304.5" y1="175" x2="1304.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="1304.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">85k</text>
+<line x1="1373.0" y1="175" x2="1373.0" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="1373.0" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">90k</text>
+<line x1="1441.5" y1="175" x2="1441.5" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="1441.5" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">95k</text>
+<line x1="1510.0" y1="175" x2="1510.0" y2="765" stroke="#efeadc" stroke-width="1"/>
+<text x="1510.0" y="795" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#555">100k</text>
+<polyline points="140.0,425.7 208.5,325.5 277.0,347.5 345.5,382.7 482.5,369.5 619.5,303.5 688.0,347.5 756.5,347.5 825.0,356.3 893.5,347.5 1030.5,360.7 1167.5,329.9 1304.5,356.3 1373.0,338.7 1441.5,373.9 1510.0,343.1" fill="none" stroke="#2B6CB0" stroke-width="5" stroke-linejoin="round" stroke-linecap="round"/>
+<circle cx="140.0" cy="425.7" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="208.5" cy="325.5" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="277.0" cy="347.5" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="345.5" cy="382.7" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="482.5" cy="369.5" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="619.5" cy="303.5" r="8" fill="#F58518" stroke="#F58518" stroke-width="4"/>
+<text x="635.5" y="287.5" font-family="Helvetica, Arial, sans-serif" font-size="18" font-weight="700" fill="#1f1f1f">Best: 19.6% at 35k</text>
+<circle cx="688.0" cy="347.5" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="756.5" cy="347.5" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="825.0" cy="356.3" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="893.5" cy="347.5" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="1030.5" cy="360.7" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="1167.5" cy="329.9" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="1304.5" cy="356.3" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="1373.0" cy="338.7" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="1441.5" cy="373.9" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<circle cx="1510.0" cy="343.1" r="8" fill="#ffffff" stroke="#2B6CB0" stroke-width="4"/>
+<text x="825.0" y="868" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#333">Training checkpoint step</text>
+<text x="52" y="470.0" transform="rotate(-90 52,470.0)" text-anchor="middle" font-family="Helvetica, Arial, sans-serif" font-size="19" fill="#333">Subtask completion (%)</text>
+<text x="140" y="912" font-family="Helvetica, Arial, sans-serif" font-size="14" fill="#666">Note: checkpoint evaluations use 1 trial per task; the step-0 baseline uses 5 trials per task.</text>
+</svg>
