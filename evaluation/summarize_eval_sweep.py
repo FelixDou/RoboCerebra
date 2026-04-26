@@ -40,6 +40,24 @@ def find_results_path(log_path: Path) -> Path | None:
     return results_path
 
 
+def normalize_checkpoint_reference(raw_checkpoint: str) -> str:
+    """Keep Hugging Face repo ids readable while resolving local checkpoint paths."""
+    checkpoint_text = str(raw_checkpoint).strip()
+    if not checkpoint_text:
+        return checkpoint_text
+
+    checkpoint_path = Path(checkpoint_text).expanduser()
+    looks_like_path = (
+        checkpoint_text.startswith("/")
+        or checkpoint_text.startswith(".")
+        or checkpoint_text.startswith("~")
+        or checkpoint_path.exists()
+    )
+    if looks_like_path:
+        return str(checkpoint_path.resolve())
+    return checkpoint_text
+
+
 def extract_metrics(results_path: Path, task_name: str) -> dict[str, object]:
     with results_path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
@@ -123,13 +141,13 @@ def main() -> None:
 
     for row in manifest_rows:
         log_path = Path(row["log_path"]).expanduser().resolve()
-        checkpoint_path = Path(row["checkpoint_path"]).expanduser().resolve()
+        checkpoint_reference = normalize_checkpoint_reference(row["checkpoint_path"])
         result_row: dict[str, object] = {
             "label": row["label"],
             "step": row["step"],
             "task": row["task"],
             "status": "missing_log",
-            "checkpoint_path": str(checkpoint_path),
+            "checkpoint_path": checkpoint_reference,
             "results_json": "",
             "log_path": str(log_path),
         }

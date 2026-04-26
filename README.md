@@ -17,7 +17,7 @@ RoboCerebra provides three main components:
 
 1. **Evaluation Suite** (`evaluation/`) - Model evaluation on RoboCerebra benchmark tasks
 2. **Dataset Builder** (`rlds_dataset_builder/`) - Convert RoboCerebra data to RLDS format for training
-3. **Training Helpers** (`training/`) - Launch LeRobot fine-tuning for PI0 / PI0.5-style policies
+3. **Training Helpers** (`training/`) - Launch LeRobot fine-tuning for PI0 / PI0.5-style policies and OpenVLA-OFT fine-tuning
 
 ## Installation
 
@@ -152,6 +152,19 @@ python eval_openvla.py \
   --task_types ["Ideal"]
 ```
 
+For a cluster-safe OpenVLA-OFT reference run across the six RoboCerebra task categories:
+
+```bash
+nohup bash evaluation/run_openvla_reference_eval.sh \
+  --bench-root "/path/to/RoboCerebraBench" \
+  --checkpoint "moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10" \
+  --eval-log-dir "./eval_logs" \
+  --rollout-root "./eval_rollouts" \
+  --gpu-ids 0 \
+  --num-trials 5 \
+  > ./eval_logs/openvla_reference_launcher.log 2>&1 &
+```
+
 ### Dataset Conversion
 
 Convert RoboCerebra data to RLDS format for training:
@@ -234,6 +247,26 @@ python training/finetune_rlds_policy.py \
 
 For a quick smoke test first, add `--max_episodes 100 --dry_run`.
 
+### OpenVLA-OFT Fine-Tuning
+
+OpenVLA-OFT fine-tuning uses the RLDS / TFDS dataset directly instead of the LeRobot export:
+
+```bash
+python training/finetune_openvla_oft.py \
+  --openvla_oft_root "/path/to/openvla-oft" \
+  --rlds_dir "/path/to/rlds_data/homerobo_dataset" \
+  --run_root_dir "./outputs/openvla_oft" \
+  --job_name "robocerebra_openvla_oft_smoke" \
+  --nproc_per_node 1 \
+  --batch_size 4 \
+  --max_steps 10000 \
+  --save_freq 5000 \
+  --wandb_entity "<WANDB_ENTITY>" \
+  --wandb_project "robocerebra-openvla"
+```
+
+The wrapper resolves and launches OpenVLA-OFT's `vla-scripts/finetune.py` with the same OFT defaults used for LIBERO-style policies: L1 regression, two images, proprioception, LoRA rank 32, and image augmentation. Use `--dry_run` first to print the exact `torchrun` command.
+
 ## Directory Structure
 
 ```
@@ -249,9 +282,10 @@ RoboCerebra/
 │   ├── episode.py                    # Episode-level execution
 │   ├── resume.py                     # Resume mechanism
 │   └── utils.py                      # Utility functions
-├── training/                         # LeRobot fine-tuning helpers
+├── training/                         # Fine-tuning helpers
 │   └── finetune_lerobot_policy.py    # PI0 / PI0.5 training launcher
 │   └── finetune_rlds_policy.py       # Direct RLDS / TFDS -> PI0 / PI0.5 launcher
+│   └── finetune_openvla_oft.py       # OpenVLA-OFT training launcher
 └── rlds_dataset_builder/             # Dataset conversion tools
     ├── README.md                     # Conversion documentation
     ├── regenerate_robocerebra_dataset.py  # HDF5 conversion
