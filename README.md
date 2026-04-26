@@ -249,7 +249,52 @@ For a quick smoke test first, add `--max_episodes 100 --dry_run`.
 
 ### OpenVLA-OFT Fine-Tuning
 
-OpenVLA-OFT fine-tuning uses the RLDS / TFDS dataset directly instead of the LeRobot export:
+OpenVLA-OFT fine-tuning uses the RLDS / TFDS dataset directly instead of the LeRobot export.
+To match the PI experiments above, use the same four RoboCerebra train subsets that were merged in
+`convert_rlds_to_lerobot.py`: `coffee_table_p1p2`, `coffee_table_p3`, `kitchen_table_p1`, and
+`study_table_p1`. The launcher stages those TFDS builders under one temporary data root and registers
+RoboCerebra's LIBERO-style feature mapping inside OpenVLA-OFT before training starts.
+
+Cluster example for a 4-H100 node:
+
+```bash
+cd /gs/fs/tga-shinoda/felid/RoboCerebra
+
+module load miniconda
+eval "$(/apps/t4/rhel9/free/miniconda/24.1.2/bin/conda shell.bash hook)"
+conda activate /gs/bs/tga-shinoda/felid/envs/robocerebra-pi0
+
+export HF_HOME=/gs/bs/tga-shinoda/felid/.cache/huggingface
+export HF_HUB_CACHE=${HF_HOME}/hub
+export TOKENIZERS_PARALLELISM=false
+
+OPENVLA_OFT_ROOT=/gs/fs/tga-shinoda/felid/openvla-oft
+ROBOCEREBRA_DATA_ROOT=/gs/bs/tga-shinoda/felid/robocerebra_data
+JOB=robocerebra_openvla_oft_full_4h100_bs4_200000_$(date +%Y%m%d_%H%M%S)
+LOG=/gs/bs/tga-shinoda/felid/logs/${JOB}.log
+mkdir -p /gs/bs/tga-shinoda/felid/logs
+
+nohup python training/finetune_openvla_oft.py \
+  --openvla_oft_root "$OPENVLA_OFT_ROOT" \
+  --robocerebra_data_root "$ROBOCEREBRA_DATA_ROOT" \
+  --robocerebra_trainset_preset full \
+  --run_root_dir "/gs/bs/tga-shinoda/felid/outputs/openvla_oft/${JOB}" \
+  --job_name "$JOB" \
+  --nproc_per_node 4 \
+  --batch_size 4 \
+  --max_steps 200000 \
+  --save_freq 10000 \
+  --num_steps_before_decay 100000 \
+  --wandb_entity "<WANDB_ENTITY>" \
+  --wandb_project "robocerebra-openvla" \
+  > "$LOG" 2>&1 &
+
+echo "JOB=$JOB"
+echo "LOG=$LOG"
+tail -f "$LOG"
+```
+
+For a single-dataset smoke test only, pass one `--rlds_dir` explicitly:
 
 ```bash
 python training/finetune_openvla_oft.py \

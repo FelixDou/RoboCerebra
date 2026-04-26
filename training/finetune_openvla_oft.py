@@ -13,15 +13,46 @@ the OpenVLA-OFT repository.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 
 DEFAULT_VLA_PATH = "openvla/openvla-7b"
 DEFAULT_JOB_NAME = "robocerebra_openvla_oft_finetune"
+DEFAULT_ROBOCEREBRA_MIXTURE_NAME = "robocerebra_train_full"
+
+ROBOCEREBRA_TRAINSET_PRESETS: dict[str, tuple[str, ...]] = {
+    "full": (
+        "RoboCerebra_trainset_coffee_table_p1p2_rlds/homerobo_trainset_p1p2",
+        "RoboCerebra_trainset_coffee_table_p3_rlds/homerobo_trainset_p3",
+        "RoboCerebra_trainset_kitchen_table_p1_rlds/homerobo_trainset_kitchen_table_p1",
+        "RoboCerebra_trainset_study_table_p1_rlds/homerobo_trainset_study_table_p1",
+    ),
+    "coffee_table_p1p2": (
+        "RoboCerebra_trainset_coffee_table_p1p2_rlds/homerobo_trainset_p1p2",
+    ),
+    "coffee_table_p3": (
+        "RoboCerebra_trainset_coffee_table_p3_rlds/homerobo_trainset_p3",
+    ),
+    "kitchen_table_p1": (
+        "RoboCerebra_trainset_kitchen_table_p1_rlds/homerobo_trainset_kitchen_table_p1",
+    ),
+    "study_table_p1": (
+        "RoboCerebra_trainset_study_table_p1_rlds/homerobo_trainset_study_table_p1",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class TFDSDatasetRef:
+    data_root_dir: Path
+    dataset_name: str
+    dataset_root: Path
 
 
 def parse_bool(value: bool | str) -> bool:
@@ -54,10 +85,36 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--rlds_dir",
+        action="append",
+        default=[],
+        help=(
+            "Path to a TFDS dataset directory. Repeat this flag to match the four-way RoboCerebra "
+            "training data used for the PI conversion. Pass either the dataset root or its version directory."
+        ),
+    )
+    parser.add_argument(
+        "--robocerebra_data_root",
         default=None,
         help=(
-            "Optional path to one TFDS dataset directory. If provided, --data_root_dir and "
-            "--dataset_name are inferred. Pass either the dataset root or its version directory."
+            "Root containing RoboCerebra_trainset_*_rlds directories. Used with "
+            "--robocerebra_trainset_preset."
+        ),
+    )
+    parser.add_argument(
+        "--robocerebra_trainset_preset",
+        choices=sorted(ROBOCEREBRA_TRAINSET_PRESETS),
+        default=None,
+        help=(
+            "Expand to the same RLDS / TFDS subsets used by the PI conversion. "
+            "Use 'full' for coffee_table_p1p2, coffee_table_p3, kitchen_table_p1, and study_table_p1."
+        ),
+    )
+    parser.add_argument(
+        "--stage_data_root_dir",
+        default=None,
+        help=(
+            "Directory where repeated --rlds_dir datasets are symlinked so OpenVLA-OFT can load them "
+            "from one data_root_dir. Defaults to <run_root_dir>/tfds_staging/<job_name>."
         ),
     )
     parser.add_argument(
@@ -143,6 +200,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lora_rank", type=int, default=32)
     parser.add_argument("--lora_dropout", type=float, default=0.0)
     parser.add_argument("--merge_lora_during_training", type=parse_bool, default=True)
+    parser.add_argument(
+        "--register_robocerebra_dataset",
+        type=parse_bool,
+        default=True,
+        help=(
+            "Run OpenVLA-OFT through a generated wrapper that registers RoboCerebra's LIBERO-style "
+            "TFDS feature mapping before training starts."
+        ),
+    )
+    parser.add_argument(
+        "--robocerebra_mixture_name",
+        default=DEFAULT_ROBOCEREBRA_MIXTURE_NAME,
+        help="OpenVLA-OFT mixture name used when repeated --rlds_dir inputs are provided.",
+    )
     parser.add_argument("--save_latest_checkpoint_only", type=parse_bool, default=False)
     parser.add_argument("--resume", type=parse_bool, default=False)
     parser.add_argument("--resume_step", type=int, default=None)
@@ -213,7 +284,7 @@ def resolve_torchrun(explicit_torchrun: str | None) -> str:
     raise FileNotFoundError("Could not find torchrun. Activate the OpenVLA-OFT environment first.")
 
 
-def infer_tfds_dataset_from_rlds_dir(raw_path: str) -> tuple[Path, str]:
+def infer_tfds_dataset_from_rlds_dir(raw_path: str) -> TFDSDatasetRef:
     path = Path(raw_path).expanduser().resolve()
     if not path.exists():
         raise FileNotFoundError(f"RLDS / TFDS path does not exist: {path}")
@@ -222,13 +293,17 @@ def infer_tfds_dataset_from_rlds_dir(raw_path: str) -> tuple[Path, str]:
         dataset_root = path.parent
         if dataset_root.name.replace(".", "").isdigit():
             dataset_root = dataset_root.parent
-        return dataset_root.parent, dataset_root.name
+        return TFDSDatasetRef(
+            data_root_dir=dataset_root.parent,
+            dataset_name=dataset_root.name,
+            dataset_root=dataset_root,
+        )
 
     version_dirs = sorted(
         child for child in path.iterdir() if child.is_dir() and (child / "dataset_info.json").is_file()
     )
     if len(version_dirs) == 1:
-        return path.parent, path.name
+        return TFDSDatasetRef(data_root_dir=path.parent, dataset_name=path.name, dataset_root=path)
     if len(version_dirs) > 1:
         raise ValueError(f"Multiple TFDS versions found under {path}; pass the exact version directory.")
 
@@ -244,34 +319,184 @@ def infer_tfds_dataset_from_rlds_dir(raw_path: str) -> tuple[Path, str]:
             nested_dataset_roots.append(child)
     if len(nested_dataset_roots) == 1:
         dataset_root = nested_dataset_roots[0]
-        return dataset_root.parent, dataset_root.name
+        return TFDSDatasetRef(
+            data_root_dir=dataset_root.parent,
+            dataset_name=dataset_root.name,
+            dataset_root=dataset_root,
+        )
 
     raise FileNotFoundError(
         f"Could not infer TFDS dataset root from {path}. Pass --data_root_dir and --dataset_name explicitly."
     )
 
 
-def resolve_dataset_args(args: argparse.Namespace) -> tuple[Path, str]:
-    if args.rlds_dir:
-        inferred_root, inferred_name = infer_tfds_dataset_from_rlds_dir(args.rlds_dir)
-        data_root_dir = Path(args.data_root_dir).expanduser().resolve() if args.data_root_dir else inferred_root
-        dataset_name = args.dataset_name or inferred_name
+def expand_rlds_dirs(args: argparse.Namespace) -> list[str]:
+    rlds_dirs = list(args.rlds_dir or [])
+    if args.robocerebra_trainset_preset:
+        if not args.robocerebra_data_root:
+            raise ValueError("--robocerebra_trainset_preset requires --robocerebra_data_root.")
+        data_root = Path(args.robocerebra_data_root).expanduser().resolve()
+        rlds_dirs.extend(
+            str(data_root / rel_path)
+            for rel_path in ROBOCEREBRA_TRAINSET_PRESETS[args.robocerebra_trainset_preset]
+        )
+    return rlds_dirs
+
+
+def stage_tfds_dataset_roots(dataset_refs: list[TFDSDatasetRef], stage_root: Path, dry_run: bool) -> Path:
+    seen_names: set[str] = set()
+    duplicate_names: set[str] = set()
+    for ref in dataset_refs:
+        if ref.dataset_name in seen_names:
+            duplicate_names.add(ref.dataset_name)
+        seen_names.add(ref.dataset_name)
+    if duplicate_names:
+        raise ValueError(f"Duplicate TFDS dataset names are not supported: {', '.join(duplicate_names)}")
+
+    if dry_run:
+        return stage_root
+
+    stage_root.mkdir(parents=True, exist_ok=True)
+    for ref in dataset_refs:
+        link_path = stage_root / ref.dataset_name
+        if link_path.exists() or link_path.is_symlink():
+            try:
+                if link_path.resolve() == ref.dataset_root.resolve():
+                    continue
+            except FileNotFoundError:
+                pass
+            raise FileExistsError(
+                f"Cannot stage TFDS dataset {ref.dataset_name}: {link_path} already exists "
+                f"and does not point to {ref.dataset_root}."
+            )
+        link_path.symlink_to(ref.dataset_root, target_is_directory=True)
+    return stage_root
+
+
+def resolve_dataset_args(args: argparse.Namespace) -> tuple[Path, str, list[str]]:
+    expanded_rlds_dirs = expand_rlds_dirs(args)
+    if expanded_rlds_dirs:
+        dataset_refs = [infer_tfds_dataset_from_rlds_dir(path_str) for path_str in expanded_rlds_dirs]
+        if len(dataset_refs) == 1:
+            data_root_dir = (
+                Path(args.data_root_dir).expanduser().resolve()
+                if args.data_root_dir
+                else dataset_refs[0].data_root_dir
+            )
+            dataset_name = args.dataset_name or dataset_refs[0].dataset_name
+        else:
+            if args.data_root_dir:
+                data_root_dir = Path(args.data_root_dir).expanduser().resolve()
+            else:
+                default_stage_root = Path(args.run_root_dir).expanduser().resolve() / "tfds_staging" / args.job_name
+                stage_root = (
+                    Path(args.stage_data_root_dir).expanduser().resolve()
+                    if args.stage_data_root_dir
+                    else default_stage_root
+                )
+                data_root_dir = stage_tfds_dataset_roots(dataset_refs, stage_root, args.dry_run)
+            dataset_name = args.dataset_name or args.robocerebra_mixture_name
+        registered_dataset_names = [ref.dataset_name for ref in dataset_refs]
     else:
         if not args.data_root_dir or not args.dataset_name:
-            raise ValueError("Pass either --rlds_dir or both --data_root_dir and --dataset_name.")
+            raise ValueError(
+                "Pass --rlds_dir, --robocerebra_trainset_preset, or both --data_root_dir and --dataset_name."
+            )
         data_root_dir = Path(args.data_root_dir).expanduser().resolve()
         dataset_name = args.dataset_name
+        registered_dataset_names = [dataset_name]
 
     if not data_root_dir.exists():
-        raise FileNotFoundError(f"data_root_dir does not exist: {data_root_dir}")
-    return data_root_dir, dataset_name
+        if args.dry_run:
+            print(f"Warning: data_root_dir does not exist yet: {data_root_dir}")
+        else:
+            raise FileNotFoundError(f"data_root_dir does not exist: {data_root_dir}")
+    return data_root_dir, dataset_name, registered_dataset_names
+
+
+def write_robocerebra_openvla_wrapper(
+    finetune_script: Path,
+    openvla_oft_root: Path,
+    run_root_dir: Path,
+    job_name: str,
+    dataset_names: list[str],
+    mixture_name: str,
+) -> Path:
+    wrapper_dir = run_root_dir / "robocerebra_openvla_wrappers"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    wrapper_path = wrapper_dir / f"{job_name}_finetune.py"
+    payload = {
+        "finetune_script": str(finetune_script),
+        "dataset_names": dataset_names,
+        "mixture_name": mixture_name,
+    }
+    payload_json = json.dumps(payload, indent=2)
+    wrapper_source = f'''#!/usr/bin/env python3
+"""Generated RoboCerebra OpenVLA-OFT launcher wrapper."""
+
+import importlib
+import json
+import runpy
+import sys
+
+
+PAYLOAD = json.loads({payload_json!r})
+
+
+def patch_robocerebra_dataset_registries() -> None:
+    configs = importlib.import_module("prismatic.vla.datasets.rlds.oxe.configs")
+    mixtures = importlib.import_module("prismatic.vla.datasets.rlds.oxe.mixtures")
+    transforms = importlib.import_module("prismatic.vla.datasets.rlds.oxe.transforms")
+    oxe = importlib.import_module("prismatic.vla.datasets.rlds.oxe")
+
+    dataset_config = {{
+        "image_obs_keys": {{"primary": "image", "secondary": None, "wrist": "wrist_image"}},
+        "depth_obs_keys": {{"primary": None, "secondary": None, "wrist": None}},
+        "state_obs_keys": ["EEF_state", "gripper_state"],
+        "state_encoding": configs.StateEncoding.POS_EULER,
+        "action_encoding": configs.ActionEncoding.EEF_POS,
+    }}
+
+    dataset_names = list(PAYLOAD["dataset_names"])
+    for dataset_name in dataset_names:
+        configs.OXE_DATASET_CONFIGS[dataset_name] = {{
+            key: value.copy() if isinstance(value, dict) else list(value) if isinstance(value, list) else value
+            for key, value in dataset_config.items()
+        }}
+        transforms.OXE_STANDARDIZATION_TRANSFORMS[dataset_name] = transforms.libero_dataset_transform
+
+    mixture_name = PAYLOAD["mixture_name"]
+    mixtures.OXE_NAMED_MIXTURES[mixture_name] = [(dataset_name, 1.0) for dataset_name in dataset_names]
+    oxe.OXE_NAMED_MIXTURES = mixtures.OXE_NAMED_MIXTURES
+
+
+patch_robocerebra_dataset_registries()
+sys.argv[0] = PAYLOAD["finetune_script"]
+runpy.run_path(PAYLOAD["finetune_script"], run_name="__main__")
+'''
+    wrapper_path.write_text(wrapper_source, encoding="utf-8")
+    wrapper_path.chmod(0o755)
+    if wrapper_path.is_relative_to(openvla_oft_root):
+        return wrapper_path.relative_to(openvla_oft_root)
+    return wrapper_path
 
 
 def build_command(args: argparse.Namespace) -> tuple[list[str], Path]:
     openvla_oft_root = resolve_openvla_oft_root(args.openvla_oft_root, args.finetune_script)
     finetune_script = resolve_finetune_script(openvla_oft_root, args.finetune_script)
-    data_root_dir, dataset_name = resolve_dataset_args(args)
+    run_root_dir = Path(args.run_root_dir).expanduser().resolve()
+    data_root_dir, dataset_name, registered_dataset_names = resolve_dataset_args(args)
     torchrun = resolve_torchrun(args.torchrun)
+    script_to_launch = finetune_script
+    if args.register_robocerebra_dataset:
+        script_to_launch = write_robocerebra_openvla_wrapper(
+            finetune_script=finetune_script,
+            openvla_oft_root=openvla_oft_root,
+            run_root_dir=run_root_dir,
+            job_name=args.job_name,
+            dataset_names=registered_dataset_names,
+            mixture_name=args.robocerebra_mixture_name,
+        )
 
     command = [torchrun]
     if args.standalone:
@@ -280,10 +505,9 @@ def build_command(args: argparse.Namespace) -> tuple[list[str], Path]:
     command.extend(["--nproc-per-node", str(args.nproc_per_node)])
     if args.master_port:
         command.extend(["--master-port", str(args.master_port)])
-    command.append(str(finetune_script))
+    command.append(str(script_to_launch))
 
     run_id_note = args.run_id_note or args.job_name
-    run_root_dir = Path(args.run_root_dir).expanduser().resolve()
 
     append_arg(command, "vla_path", args.vla_path)
     append_arg(command, "data_root_dir", data_root_dir)
@@ -329,7 +553,7 @@ def main() -> None:
 
     print("Resolved OpenVLA-OFT training command:")
     print(f"cd {shlex.quote(str(openvla_oft_root))}")
-    print(shlex.join(command))
+    print(shlex.join(command), flush=True)
 
     if args.dry_run:
         return
