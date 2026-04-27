@@ -143,9 +143,9 @@ python training/finetune_lerobot_policy.py \
   --no-compile_model \
   --no-gradient_checkpointing \
   "$wandb_flag" \
-  --extra_arg "--save_freq=${SAVE_FREQ}" \
-  --extra_arg "--wandb.entity=${WANDB_ENTITY}" \
-  --extra_arg "--wandb.project=${WANDB_PROJECT}" \
+  "--extra_arg=--save_freq=${SAVE_FREQ}" \
+  "--extra_arg=--wandb.entity=${WANDB_ENTITY}" \
+  "--extra_arg=--wandb.project=${WANDB_PROJECT}" \
   2>&1 | tee -a "$TRAIN_LOG"
 
 if [[ ! -d "$RUN_OUT/checkpoints" ]]; then
