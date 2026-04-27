@@ -23,7 +23,6 @@ Common optional environment:
   STEPS                   Default: 3000
   SAVE_FREQ               Default: 1000
   BATCH_SIZE              Default: 4
-  NPROC_PER_NODE          Default: 1
   CUDA_VISIBLE_DEVICES    Default: 0
   EVAL_TASK_TYPES         Default: ["Ideal"]
   EVAL_CASE_REGEX         Optional regex for case names. Default: empty
@@ -61,7 +60,6 @@ MAX_EPISODES="${MAX_EPISODES:-10}"
 STEPS="${STEPS:-3000}"
 SAVE_FREQ="${SAVE_FREQ:-1000}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
-NPROC_PER_NODE="${NPROC_PER_NODE:-1}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 EVAL_TASK_TYPES="${EVAL_TASK_TYPES:-[\"Ideal\"]}"
 EVAL_CASE_REGEX="${EVAL_CASE_REGEX:-}"
@@ -70,6 +68,10 @@ EVAL_TRIALS="${EVAL_TRIALS:-1}"
 WANDB_ENABLE="${WANDB_ENABLE:-false}"
 WANDB_ENTITY="${WANDB_ENTITY:-felixdoublet}"
 WANDB_PROJECT="${WANDB_PROJECT:-robocerebra-pi0-overfit}"
+wandb_flag="--no-wandb"
+if [[ "$WANDB_ENABLE" == "true" ]]; then
+  wandb_flag="--wandb"
+fi
 
 export CUDA_VISIBLE_DEVICES
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
@@ -115,7 +117,7 @@ python training/finetune_rlds_policy.py \
   --save_freq "$SAVE_FREQ" \
   --no-compile_model \
   --no-gradient_checkpointing \
-  "$([[ "$WANDB_ENABLE" == "true" ]] && echo "--wandb" || echo "--no-wandb")" \
+  "$wandb_flag" \
   --extra_arg "--wandb.entity=${WANDB_ENTITY}" \
   --extra_arg "--wandb.project=${WANDB_PROJECT}" \
   2>&1 | tee "$TRAIN_LOG"
