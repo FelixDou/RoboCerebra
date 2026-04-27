@@ -90,6 +90,7 @@ JOB="${JOB:-robocerebra_pi0_ideal_gt_overfit_${MAX_CASES}cases_${STEPS}steps_$(d
 HDF5_ROOT="${WORK_ROOT}/${JOB}/converted_hdf5"
 LEROBOT_ROOT="${WORK_ROOT}/${JOB}/lerobot_datasets"
 DATASET_REPO_ID="robocerebra/${JOB}_dataset"
+DATASET_ROOT="${LEROBOT_ROOT}/${DATASET_REPO_ID}"
 TRAIN_LOG="${LOG_DIR}/${JOB}.log"
 RUN_OUT="${OUT_ROOT}/${JOB}"
 
@@ -103,6 +104,7 @@ echo "STRICT_ORIGINAL_ONLY=$STRICT_ORIGINAL_ONLY"
 echo "HDF5_ROOT=$HDF5_ROOT"
 echo "LEROBOT_ROOT=$LEROBOT_ROOT"
 echo "DATASET_REPO_ID=$DATASET_REPO_ID"
+echo "DATASET_ROOT=$DATASET_ROOT"
 echo "RUN_OUT=$RUN_OUT"
 echo "TRAIN_LOG=$TRAIN_LOG"
 echo "CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES"
@@ -134,7 +136,7 @@ python rlds_dataset_builder/convert_hdf5_to_lerobot.py "${convert_args[@]}" 2>&1
 python training/finetune_lerobot_policy.py \
   --model_family pi0 \
   --dataset_repo_id "$DATASET_REPO_ID" \
-  --dataset_root "$LEROBOT_ROOT" \
+  --dataset_root "$DATASET_ROOT" \
   --pretrained_path "$PI0_PRETRAINED" \
   --job_name "$JOB" \
   --output_dir "$OUT_ROOT" \
