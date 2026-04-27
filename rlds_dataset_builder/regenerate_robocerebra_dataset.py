@@ -267,6 +267,15 @@ def main(args):
 
     raw_root = Path(args.robocerebra_raw_data_dir)
     subdirs = collect_case_dirs(raw_root)
+    if args.case_regex:
+        pattern = re.compile(args.case_regex)
+        subdirs = [
+            subdir
+            for subdir in subdirs
+            if pattern.search(str(subdir.relative_to(raw_root)).replace(os.sep, "/")) or pattern.search(subdir.name)
+        ]
+    if args.max_cases is not None:
+        subdirs = subdirs[: args.max_cases]
 
     # Outer loop: process subdirectories
     for subdir in tqdm.tqdm(subdirs, desc="[SUBDIR] Raw subfolders"):
@@ -516,6 +525,10 @@ if __name__ == "__main__":
                        help="Optional: Override auto-detected scene type. Available: %(choices)s")
     parser.add_argument("--overwrite", action="store_true",
                        help="Delete an existing target directory without prompting. Useful for nohup / batch runs.")
+    parser.add_argument("--case_regex", default=None,
+                       help="Optional regex filter applied to case directory names / relative paths.")
+    parser.add_argument("--max_cases", type=int, default=None,
+                       help="Optional cap on the number of cases converted after filtering.")
     parser.add_argument("--write_mp4", action="store_true",
                        help="Also export a per-step MP4 preview alongside each HDF5 episode. Disabled by default to save time and disk space.")
     parser.add_argument("--mp4_fps", type=int, default=30,

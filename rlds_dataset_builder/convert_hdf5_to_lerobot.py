@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import inspect
+import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -100,6 +101,17 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help="Optional cap for quick debugging runs.",
+    )
+    parser.add_argument(
+        "--case_regex",
+        default=None,
+        help="Optional regex filter applied to converted case names.",
+    )
+    parser.add_argument(
+        "--max_cases",
+        type=int,
+        default=None,
+        help="Optional cap on converted cases after filtering.",
     )
     parser.add_argument(
         "--overwrite",
@@ -349,6 +361,20 @@ def main() -> None:
     root = Path(args.root).expanduser().resolve()
     per_step_root = resolve_per_step_root(input_root)
     episode_specs = iter_episode_specs(per_step_root)
+    if args.case_regex:
+        pattern = re.compile(args.case_regex)
+        episode_specs = [episode_spec for episode_spec in episode_specs if pattern.search(episode_spec.case_name)]
+    if args.max_cases is not None:
+        selected_cases = []
+        selected_case_set = set()
+        for episode_spec in episode_specs:
+            if episode_spec.case_name not in selected_case_set:
+                selected_cases.append(episode_spec.case_name)
+                selected_case_set.add(episode_spec.case_name)
+            if len(selected_cases) >= args.max_cases:
+                break
+        selected_case_set = set(selected_cases)
+        episode_specs = [episode_spec for episode_spec in episode_specs if episode_spec.case_name in selected_case_set]
 
     if args.max_episodes is not None:
         episode_specs = episode_specs[: args.max_episodes]
