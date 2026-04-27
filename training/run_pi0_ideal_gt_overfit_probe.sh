@@ -146,6 +146,7 @@ python training/finetune_lerobot_policy.py \
   --no-gradient_checkpointing \
   "$wandb_flag" \
   "--extra_arg=--save_freq=${SAVE_FREQ}" \
+  "--extra_arg=--policy.push_to_hub=false" \
   "--extra_arg=--wandb.entity=${WANDB_ENTITY}" \
   "--extra_arg=--wandb.project=${WANDB_PROJECT}" \
   2>&1 | tee -a "$TRAIN_LOG"
