@@ -313,8 +313,12 @@ def main(args):
             if distract_val:
                 distractor = f"{distract_val}_1_joint0"
 
+        texture_options = list_texture_options(scene_to_use)
+        if args.no_texture_variants:
+            texture_options = texture_options[:1]
+
         # Inner loop: process textures
-        for tex_idx, tex_rel in enumerate(list_texture_options(scene_to_use)):
+        for tex_idx, tex_rel in enumerate(texture_options):
             tex_suffix = f"tex{tex_idx}"
             set_scene_texture(scene_to_use, tex_rel)
 
@@ -349,7 +353,7 @@ def main(args):
                     mj_model.site_rgba[mj_model.site_name2id(sn)][3] = 0.0
 
             variants = [("orig", [])]
-            if dq0 is not None:
+            if dq0 is not None and not args.no_distractor_variants:
                 variants += [
                     ("dxp005", [(dq0, +0.05)]),
                     ("dyp005", [(dq1, +0.05)]),
@@ -533,4 +537,8 @@ if __name__ == "__main__":
                        help="Also export a per-step MP4 preview alongside each HDF5 episode. Disabled by default to save time and disk space.")
     parser.add_argument("--mp4_fps", type=int, default=30,
                        help="Frame rate used when `--write_mp4` is enabled.")
+    parser.add_argument("--no_texture_variants", action="store_true",
+                       help="Only export one texture variant. Useful for strict overfit diagnostics.")
+    parser.add_argument("--no_distractor_variants", action="store_true",
+                       help="Disable distractor-shift variants. Useful for strict overfit diagnostics.")
     main(parser.parse_args())

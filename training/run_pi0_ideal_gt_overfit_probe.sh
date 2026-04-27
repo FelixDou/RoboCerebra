@@ -26,6 +26,7 @@ Common optional environment:
   BATCH_SIZE              Default: 4
   CUDA_VISIBLE_DEVICES    Default: 0
   EVAL_TRIALS             Default: 1
+  STRICT_ORIGINAL_ONLY    Disable texture/distractor variants. Default: true
   WANDB_ENABLE            Default: false
   WANDB_ENTITY            Default: felixdoublet
   WANDB_PROJECT           Default: robocerebra-pi0-overfit
@@ -60,6 +61,7 @@ SAVE_FREQ="${SAVE_FREQ:-1000}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 EVAL_TRIALS="${EVAL_TRIALS:-1}"
+STRICT_ORIGINAL_ONLY="${STRICT_ORIGINAL_ONLY:-true}"
 WANDB_ENABLE="${WANDB_ENABLE:-false}"
 WANDB_ENTITY="${WANDB_ENTITY:-felixdoublet}"
 WANDB_PROJECT="${WANDB_PROJECT:-robocerebra-pi0-overfit}"
@@ -97,6 +99,7 @@ echo "JOB=$JOB"
 echo "IDEAL_ROOT=$IDEAL_ROOT"
 echo "MAX_CASES=$MAX_CASES"
 echo "CASE_REGEX=$CASE_REGEX"
+echo "STRICT_ORIGINAL_ONLY=$STRICT_ORIGINAL_ONLY"
 echo "HDF5_ROOT=$HDF5_ROOT"
 echo "LEROBOT_ROOT=$LEROBOT_ROOT"
 echo "DATASET_REPO_ID=$DATASET_REPO_ID"
@@ -114,6 +117,9 @@ regen_args=(
 )
 if [[ -n "$CASE_REGEX" ]]; then
   regen_args+=(--case_regex "$CASE_REGEX")
+fi
+if [[ "$STRICT_ORIGINAL_ONLY" == "true" ]]; then
+  regen_args+=(--no_texture_variants --no_distractor_variants)
 fi
 python rlds_dataset_builder/regenerate_robocerebra_dataset.py "${regen_args[@]}" 2>&1 | tee "$TRAIN_LOG"
 
