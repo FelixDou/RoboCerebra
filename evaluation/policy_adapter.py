@@ -229,7 +229,7 @@ def _build_lerobot_batch(policy_runtime: PolicyRuntime, observation: Dict[str, A
             state_features.append(feature_name)
 
     if not visual_features:
-        visual_features = ["observation.images.image", "observation.images.image2"]
+        visual_features = ["observation.images.image", "observation.images.wrist_image"]
     if not state_features:
         state_features = ["observation.state"]
 
