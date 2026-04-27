@@ -18,6 +18,7 @@ import h5py
 import numpy as np
 
 from config import GenerateConfig
+from resume import create_step_based_resume_handler, simulate_resume_completion
 from task_runner import setup_task_environment
 from utils import get_libero_dummy_action, load_actions_with_steps, load_init_state
 
@@ -76,24 +77,45 @@ def completed_count(env, goal) -> tuple[int, dict]:
 
 def run_continuous_replay(env, goal, states: np.ndarray, actions: np.ndarray, initial_state: np.ndarray | None) -> None:
     env.reset()
-    set_env_state(env, initial_state if initial_state is not None else states[0])
+    set_env_state(env, states[0])
+    env.skip_pick_quat_once = True
     step_actions(env, [get_libero_dummy_action("pi0")] * 15)
     before, before_details = completed_count(env, goal)
     step_actions(env, actions)
     after, after_details = completed_count(env, goal)
-    print("CONTINUOUS_REPLAY")
+    print("CONTINUOUS_REPLAY_FROM_DEMO_STATE0")
     print(f"  start_completed={before} details={json.dumps(before_details, sort_keys=True)}")
     print(f"  final_completed={after} details={json.dumps(after_details, sort_keys=True)}")
 
+    if initial_state is not None:
+        env.reset()
+        set_env_state(env, initial_state)
+        step_actions(env, [get_libero_dummy_action("pi0")] * 15)
+        before, before_details = completed_count(env, goal)
+        step_actions(env, actions)
+        after, after_details = completed_count(env, goal)
+        print("CONTINUOUS_REPLAY_FROM_INIT_FILE")
+        print(f"  start_completed={before} details={json.dumps(before_details, sort_keys=True)}")
+        print(f"  final_completed={after} details={json.dumps(after_details, sort_keys=True)}")
 
-def run_segmented_replay(env, goal, states: np.ndarray, actions: np.ndarray, intervals: list[tuple[str, int, int]]) -> None:
-    print("SEGMENTED_REPLAY")
+
+def run_segmented_replay(
+    env,
+    goal,
+    states: np.ndarray,
+    actions: np.ndarray,
+    intervals: list[tuple[str, int, int]],
+    resume_handler,
+) -> None:
+    print("SEGMENTED_REPLAY_WITH_EVAL_RESUME")
     total_after = 0
     for step_idx, (desc, start, end) in enumerate(intervals):
         env.reset()
         start = max(0, min(start, len(states) - 1))
         end = max(start + 1, min(end, len(actions)))
         set_env_state(env, states[start])
+        env.skip_pick_quat_once = True
+        resume_count, completed_by_resume = simulate_resume_completion(env, goal, resume_handler, step_idx)
         if step_idx == 0:
             step_actions(env, [get_libero_dummy_action("pi0")] * 15)
         before, before_details = completed_count(env, goal)
@@ -101,8 +123,9 @@ def run_segmented_replay(env, goal, states: np.ndarray, actions: np.ndarray, int
         after, after_details = completed_count(env, goal)
         total_after += max(0, after - before)
         print(
-            f"  step={step_idx} frames=[{start},{end}) "
-            f"before={before} after={after} delta={after - before} desc={desc!r}"
+            f"  step={step_idx} frames=[{start},{end}) resume_count={resume_count} "
+            f"completed_by_resume={completed_by_resume} before={before} after={after} "
+            f"delta={after - before} desc={desc!r}"
         )
         print(f"    before_details={json.dumps(before_details, sort_keys=True)}")
         print(f"    after_details={json.dumps(after_details, sort_keys=True)}")
@@ -130,7 +153,8 @@ def main() -> None:
 
     states, actions = load_demo(task_dir / "demo.hdf5")
     intervals = parse_step_intervals(task_dir / "task_description.txt")
-    goal, _ = load_actions_with_steps(str(task_dir / "goal.json"))
+    goal, goal_steps = load_actions_with_steps(str(task_dir / "goal.json"))
+    resume_handler = create_step_based_resume_handler(goal, goal_steps)
 
     cfg = GenerateConfig(
         robocerebra_root=str(root),
@@ -145,7 +169,7 @@ def main() -> None:
     print(f"INIT_STATE={'yes' if initial_state is not None else 'no'}")
 
     run_continuous_replay(env, goal, states, actions, initial_state)
-    run_segmented_replay(env, goal, states, actions, intervals)
+    run_segmented_replay(env, goal, states, actions, intervals, resume_handler)
 
 
 if __name__ == "__main__":
