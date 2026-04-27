@@ -167,6 +167,12 @@ def parse_args() -> argparse.Namespace:
         help="Number of training steps.",
     )
     parser.add_argument(
+        "--save_freq",
+        type=int,
+        default=None,
+        help="Checkpoint save frequency passed to LeRobot. Defaults to LeRobot's training config.",
+    )
+    parser.add_argument(
         "--batch_size",
         type=int,
         default=4,
@@ -859,6 +865,7 @@ def build_underlying_argv(args: argparse.Namespace, model_family: str) -> list[s
     append_override(argv, "output_dir", output_dir)
     append_override(argv, "job_name", job_name)
     append_override(argv, "steps", args.steps)
+    append_override(argv, "save_freq", args.save_freq)
     append_override(argv, "batch_size", args.batch_size)
     append_override(argv, "num_workers", args.num_workers)
     append_override(argv, "seed", args.seed)

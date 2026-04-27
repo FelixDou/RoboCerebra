@@ -269,12 +269,18 @@ def get_task_directories(cfg: GenerateConfig) -> List[Tuple[str, Path]]:
             logger.warning(f"Source directory not found: {source_dir}")
             continue
             
-        for case_dir in source_dir.iterdir():
+        selected_for_type = 0
+        for case_dir in sorted(source_dir.iterdir()):
             if case_dir.is_dir():
+                if cfg.task_case_regex and not re.search(cfg.task_case_regex, case_dir.name):
+                    continue
                 # Check if it contains a BDDL file
                 bddl_files = list(case_dir.glob("*.bddl"))
                 if bddl_files:
                     task_dirs.append((task_type, case_dir))
+                    selected_for_type += 1
+                    if cfg.max_tasks_per_type is not None and selected_for_type >= cfg.max_tasks_per_type:
+                        break
                     
     logger.info(f"Found {len(task_dirs)} total task directories")
     return task_dirs

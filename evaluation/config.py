@@ -70,6 +70,8 @@ class GenerateConfig:
     init_files_root: str = "/home/kslab/feli/work/Desktop/RoboCerebra/robocerebra_data/RoboCerebraBench/init_files"
     task_suite_name: str = "robocerebra"
     task_types: List[str] = None  # Which task types to evaluate
+    task_case_regex: Optional[str] = None  # Optional regex filter for case directory names
+    max_tasks_per_type: Optional[int] = None  # Optional cap after filtering, useful for probes
     num_steps_wait: int = 15
     num_trials_per_task: int = 5
     env_img_res: int = 256
