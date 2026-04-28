@@ -109,7 +109,10 @@ def infer_suggested_target(
     target: str | None,
     region_counts: Counter[str],
     final_regions: list[str],
+    first_true_frame: int | None,
 ) -> str:
+    if first_true_frame is not None:
+        return ""
     if len(predicate) != 3 or target is None or predicate[0] not in SPATIAL_TARGET_VERBS:
         return ""
     if target in region_counts:
@@ -185,7 +188,7 @@ def audit_case(root: Path, task_type: str, case_dir: Path) -> tuple[list[dict[st
             first_true_frame = scan_predicate_first_true(env, predicate, states)
             first_true_segment = segment_for_frame(first_true_frame, intervals)
             status = "HIT" if first_true_frame is not None else "MISS"
-            suggested_target = infer_suggested_target(predicate, target, region_counts, final_regions)
+            suggested_target = infer_suggested_target(predicate, target, region_counts, final_regions, first_true_frame)
 
             if status == "HIT":
                 hit_count += 1
