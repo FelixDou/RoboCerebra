@@ -128,6 +128,10 @@ def run_segmented_replay(
         end = max(start + 1, min(end, len(actions)))
         set_env_state(env, states[start])
         env.skip_pick_quat_once = True
+        # The evaluator calls _check_success at the previous segment boundary
+        # before applying resume bookkeeping. Do the same after resetting a
+        # standalone segment so env._state_progress exists.
+        completed_count(env, goal)
         resume_count, completed_by_resume = simulate_resume_completion(env, goal, resume_handler, step_idx)
         if step_idx == 0:
             step_actions(env, [get_libero_dummy_action("pi0")] * 15)
