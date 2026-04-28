@@ -31,6 +31,10 @@ class StepSpec:
     hdf5_path: Path | None
 
 
+def normalize_step_name(name: str) -> str:
+    return name.strip().rstrip(".").replace(" ", "_")
+
+
 def is_noop(action: np.ndarray, prev_action: np.ndarray | None = None, threshold: float = 1e-4) -> bool:
     if prev_action is None:
         return bool(np.linalg.norm(action[:-1]) < threshold)
@@ -71,7 +75,7 @@ def parse_step_file(txt_path: Path) -> list[tuple[str, int]]:
 
 
 def step_name_from_description(description: str) -> str:
-    return description.replace(" ", "_")
+    return normalize_step_name(description)
 
 
 def load_demo_actions(demo_path: Path) -> np.ndarray:
@@ -121,22 +125,36 @@ def discover_step_specs(bench_root: Path, hdf5_root: Path, case_regex: str | Non
 
     pattern = re.compile(case_regex) if case_regex else None
     specs: list[StepSpec] = []
-    for case_dir in sorted(path for path in (bench_root / "Ideal").iterdir() if path.is_dir()):
-        if pattern and not pattern.search(case_dir.name):
+    for per_step_case_dir in sorted(path for path in per_step_root.iterdir() if path.is_dir()):
+        case_name = per_step_case_dir.name
+        if pattern and not pattern.search(case_name):
             continue
+
+        case_dir = bench_root / "Ideal" / case_name
         steps = parse_step_file(case_dir / "task_description.txt")
-        for step_idx, (description, old_end_frame) in enumerate(steps):
-            step_name = step_name_from_description(description)
-            step_dir = per_step_root / case_dir.name / step_name
-            hdf5_files = sorted(step_dir.glob("*.hdf5")) if step_dir.is_dir() else []
+        step_by_name = {
+            step_name_from_description(description): (step_idx, description, old_end_frame)
+            for step_idx, (description, old_end_frame) in enumerate(steps)
+        }
+
+        # Match convert_hdf5_to_lerobot.py ordering exactly: sorted case dirs,
+        # then sorted step dirs, then sorted HDF5 files. This matters because
+        # LeRobot stores episodes by creation order.
+        for step_dir in sorted(path for path in per_step_case_dir.iterdir() if path.is_dir()):
+            step_name = normalize_step_name(step_dir.name)
+            if step_name not in step_by_name:
+                raise ValueError(f"Could not map per-step directory to task_description step: {step_dir}")
+            step_idx, description, old_end_frame = step_by_name[step_name]
+            hdf5_files = sorted(step_dir.glob("*.hdf5"))
             if not hdf5_files:
                 specs.append(
-                    StepSpec(case_dir.name, step_idx, step_name, description, old_end_frame, None)
+                    StepSpec(case_name, step_idx, step_name, description, old_end_frame, None)
                 )
                 continue
-            specs.append(
-                StepSpec(case_dir.name, step_idx, step_name, description, old_end_frame, hdf5_files[0])
-            )
+            for hdf5_path in hdf5_files:
+                specs.append(
+                    StepSpec(case_name, step_idx, step_name, description, old_end_frame, hdf5_path)
+                )
     return specs
 
 
