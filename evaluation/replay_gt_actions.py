@@ -65,9 +65,20 @@ def set_env_state(env, state: np.ndarray) -> None:
     env._update_observables(force=True)
 
 
-def step_actions(env, actions: Iterable[np.ndarray]) -> None:
+def step_actions(env, actions: Iterable[np.ndarray], goal=None, initial_completed: int | None = None) -> int:
+    """Replay actions and optionally poll the benchmark success monitor after every step."""
+    total_completed_prev = initial_completed
+    positive_delta = 0
     for action in actions:
         env.step(np.asarray(action, dtype=np.float32).tolist())
+        if goal is None:
+            continue
+        _, total_completed_now, _ = env._check_success(goal)
+        total_completed_now = int(total_completed_now)
+        if total_completed_prev is not None:
+            positive_delta += max(0, total_completed_now - total_completed_prev)
+        total_completed_prev = total_completed_now
+    return positive_delta
 
 
 def completed_count(env, goal) -> tuple[int, dict]:
@@ -81,10 +92,11 @@ def run_continuous_replay(env, goal, states: np.ndarray, actions: np.ndarray, in
     env.skip_pick_quat_once = True
     step_actions(env, [get_libero_dummy_action("pi0")] * 15)
     before, before_details = completed_count(env, goal)
-    step_actions(env, actions)
+    positive_delta = step_actions(env, actions, goal=goal, initial_completed=before)
     after, after_details = completed_count(env, goal)
     print("CONTINUOUS_REPLAY_FROM_DEMO_STATE0")
     print(f"  start_completed={before} details={json.dumps(before_details, sort_keys=True)}")
+    print(f"  polled_positive_delta={positive_delta}")
     print(f"  final_completed={after} details={json.dumps(after_details, sort_keys=True)}")
 
     if initial_state is not None:
@@ -92,10 +104,11 @@ def run_continuous_replay(env, goal, states: np.ndarray, actions: np.ndarray, in
         set_env_state(env, initial_state)
         step_actions(env, [get_libero_dummy_action("pi0")] * 15)
         before, before_details = completed_count(env, goal)
-        step_actions(env, actions)
+        positive_delta = step_actions(env, actions, goal=goal, initial_completed=before)
         after, after_details = completed_count(env, goal)
         print("CONTINUOUS_REPLAY_FROM_INIT_FILE")
         print(f"  start_completed={before} details={json.dumps(before_details, sort_keys=True)}")
+        print(f"  polled_positive_delta={positive_delta}")
         print(f"  final_completed={after} details={json.dumps(after_details, sort_keys=True)}")
 
 
@@ -119,17 +132,17 @@ def run_segmented_replay(
         if step_idx == 0:
             step_actions(env, [get_libero_dummy_action("pi0")] * 15)
         before, before_details = completed_count(env, goal)
-        step_actions(env, actions[start:end])
+        polled_positive_delta = step_actions(env, actions[start:end], goal=goal, initial_completed=before)
         after, after_details = completed_count(env, goal)
-        total_after += max(0, after - before)
+        total_after += polled_positive_delta
         print(
             f"  step={step_idx} frames=[{start},{end}) resume_count={resume_count} "
             f"completed_by_resume={completed_by_resume} before={before} after={after} "
-            f"delta={after - before} desc={desc!r}"
+            f"final_delta={after - before} polled_positive_delta={polled_positive_delta} desc={desc!r}"
         )
         print(f"    before_details={json.dumps(before_details, sort_keys=True)}")
         print(f"    after_details={json.dumps(after_details, sort_keys=True)}")
-    print(f"  summed_positive_segment_deltas={total_after}")
+    print(f"  summed_polled_positive_segment_deltas={total_after}")
 
 
 def main() -> None:
@@ -166,6 +179,8 @@ def main() -> None:
     print(f"TASK_DIR={task_dir}")
     print(f"DEMO_STATES={len(states)} DEMO_ACTIONS={len(actions)}")
     print("INTERVALS=" + ", ".join(f"{idx}:{start}-{end}" for idx, (_, start, end) in enumerate(intervals)))
+    print(f"GOAL_STEPS={json.dumps(goal_steps, sort_keys=True)}")
+    print(f"RESUME_HANDLER={json.dumps(resume_handler, sort_keys=True)}")
     print(f"INIT_STATE={'yes' if initial_state is not None else 'no'}")
 
     run_continuous_replay(env, goal, states, actions, initial_state)
