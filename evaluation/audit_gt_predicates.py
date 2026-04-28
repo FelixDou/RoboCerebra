@@ -38,6 +38,7 @@ SOURCE_REGION_HINTS = (
     "wooden_cabinet",
     "rack",
 )
+SPATIAL_TARGET_VERBS = {"in", "on"}
 
 
 @dataclass(frozen=True)
@@ -109,7 +110,7 @@ def infer_suggested_target(
     region_counts: Counter[str],
     final_regions: list[str],
 ) -> str:
-    if len(predicate) != 3 or target is None:
+    if len(predicate) != 3 or target is None or predicate[0] not in SPATIAL_TARGET_VERBS:
         return ""
     if target in region_counts:
         return ""
@@ -131,7 +132,9 @@ def infer_suggested_target(
         for region in candidates
         if not any(hint in region for hint in SOURCE_REGION_HINTS)
     ]
-    return (destination_candidates or candidates)[0]
+    if not destination_candidates:
+        return ""
+    return destination_candidates[0]
 
 
 def predicate_issue(
