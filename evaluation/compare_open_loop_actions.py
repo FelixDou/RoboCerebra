@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Compare benchmark GT actions against PI-family policy actions open-loop.
 
-This diagnostic starts both rollouts from the same recorded benchmark state for
-one task segment. It then executes either the recorded demo actions or the
-policy's predicted actions and writes videos plus a per-step action trace.
+This diagnostic starts from recorded benchmark states for one task segment. It
+can execute policy actions closed-loop from the segment start or predict actions
+from the recorded demo states in teacher-forced mode. It writes videos plus a
+per-step action trace.
 
 Use this when closed-loop evaluation looks random: it separates action
 representation / normalization errors from benchmark reward-monitor noise.
@@ -35,6 +36,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step_index", type=int, default=0)
     parser.add_argument("--model_family", choices=["pi0", "pi05"], default="pi0")
     parser.add_argument("--output_dir", required=True)
+    parser.add_argument(
+        "--policy_mode",
+        choices=["closed_loop", "teacher_forced"],
+        default="closed_loop",
+        help="closed_loop executes PI actions; teacher_forced predicts from recorded demo states.",
+    )
+    parser.add_argument(
+        "--reset_policy_each_step",
+        action="store_true",
+        help="Reset the PI internal action queue before every teacher-forced prediction.",
+    )
     parser.add_argument("--max_steps", type=int, default=None, help="Optional cap within the selected segment.")
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument("--seed", type=int, default=7)
@@ -122,6 +134,37 @@ def rollout_policy(
     return frames, np.stack(executed)
 
 
+def predict_policy_on_demo_states(
+    env: Any,
+    cfg: GenerateConfig,
+    policy_runtime: Any,
+    states: np.ndarray,
+    desc: str,
+    reset_each_step: bool,
+) -> tuple[list[np.ndarray], np.ndarray]:
+    env.reset()
+    reset_policy_state(policy_runtime)
+
+    frames: list[np.ndarray] = []
+    predicted: list[np.ndarray] = []
+    for state in states:
+        if reset_each_step:
+            reset_policy_state(policy_runtime)
+        set_env_state(env, state)
+        obs = env._get_observations()
+        observation, frame = prepare_observation(obs, resize_size=policy_runtime.resize_size)
+        frames.append(np.asarray(frame, dtype=np.uint8))
+        pred_actions = predict_policy_actions(cfg, policy_runtime, observation, desc)
+        if not pred_actions:
+            raise RuntimeError("Policy returned no actions.")
+        action = process_action(pred_actions[0], cfg.model_family)
+        predicted.append(np.asarray(action, dtype=np.float32).reshape(-1))
+
+    set_env_state(env, states[-1])
+    frames.append(capture_frame(env))
+    return frames, np.stack(predicted)
+
+
 def write_trace_csv(path: Path, gt_actions: np.ndarray, policy_actions: np.ndarray, start_frame: int) -> dict[str, Any]:
     if gt_actions.shape != policy_actions.shape:
         raise ValueError(f"Action shape mismatch: gt={gt_actions.shape}, policy={policy_actions.shape}")
@@ -182,7 +225,7 @@ def make_side_by_side(gt_frames: list[np.ndarray], policy_frames: list[np.ndarra
         right = policy_frames[idx]
         if left.shape != right.shape:
             raise ValueError(f"Frame shape mismatch at {idx}: {left.shape} vs {right.shape}")
-        separator = np.zeros((left.shape[0], 4, left.shape[2]), dtype=np.uint8)
+        separator = np.zeros((left.shape[0], 16, left.shape[2]), dtype=np.uint8)
         side_by_side.append(np.concatenate([left, separator, right], axis=1))
     return side_by_side
 
@@ -213,20 +256,33 @@ def main() -> None:
         policy_runtime = initialize_policy(cfg)
 
         gt_frames, gt_executed = rollout_gt(env, states[start], actions[start:end])
-        policy_frames, policy_executed = rollout_policy(
-            env,
-            cfg,
-            policy_runtime,
-            states[start],
-            desc,
-            steps=end - start,
-        )
+        if args.policy_mode == "closed_loop":
+            policy_frames, policy_executed = rollout_policy(
+                env,
+                cfg,
+                policy_runtime,
+                states[start],
+                desc,
+                steps=end - start,
+            )
+        else:
+            policy_frames, policy_executed = predict_policy_on_demo_states(
+                env,
+                cfg,
+                policy_runtime,
+                states[start:end],
+                desc,
+                reset_each_step=args.reset_policy_each_step,
+            )
 
         gt_video = output_dir / f"{args.case_name}_step{args.step_index}_gt.mp4"
-        policy_video = output_dir / f"{args.case_name}_step{args.step_index}_{args.model_family}.mp4"
-        side_by_side_video = output_dir / f"{args.case_name}_step{args.step_index}_gt_vs_{args.model_family}.mp4"
-        trace_csv = output_dir / f"{args.case_name}_step{args.step_index}_action_trace.csv"
-        summary_json = output_dir / f"{args.case_name}_step{args.step_index}_summary.json"
+        mode_suffix = f"{args.model_family}_{args.policy_mode}"
+        if args.reset_policy_each_step:
+            mode_suffix += "_reset_each_step"
+        policy_video = output_dir / f"{args.case_name}_step{args.step_index}_{mode_suffix}.mp4"
+        side_by_side_video = output_dir / f"{args.case_name}_step{args.step_index}_gt_vs_{mode_suffix}.mp4"
+        trace_csv = output_dir / f"{args.case_name}_step{args.step_index}_{mode_suffix}_action_trace.csv"
+        summary_json = output_dir / f"{args.case_name}_step{args.step_index}_{mode_suffix}_summary.json"
 
         write_video(gt_video, gt_frames, fps=args.fps)
         write_video(policy_video, policy_frames, fps=args.fps)
@@ -237,6 +293,8 @@ def main() -> None:
                 "task_dir": str(task_dir),
                 "checkpoint": str(args.checkpoint),
                 "model_family": args.model_family,
+                "policy_mode": args.policy_mode,
+                "reset_policy_each_step": bool(args.reset_policy_each_step),
                 "step_index": int(args.step_index),
                 "description": desc,
                 "frame_start": int(start),
