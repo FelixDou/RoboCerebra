@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import itertools
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -90,6 +91,29 @@ def fit_per_dim_scale(pred: np.ndarray, gt: np.ndarray) -> tuple[np.ndarray, np.
     )
     scaled_pred = pred * scale[None, :]
     return scale.astype(np.float32), np.mean(np.abs(scaled_pred - gt), axis=0).astype(np.float32)
+
+
+def best_xyz_signed_permutation(pred: np.ndarray, gt: np.ndarray) -> dict[str, Any]:
+    best: dict[str, Any] | None = None
+    for permutation in itertools.permutations(range(3)):
+        permuted = pred[:, permutation]
+        for signs in itertools.product((-1.0, 1.0), repeat=3):
+            signed = permuted * np.asarray(signs, dtype=np.float32)[None, :]
+            diff = signed - gt[:, :3]
+            mae = float(np.mean(np.abs(diff)))
+            cosine = float(np.mean(cosine_values(signed, gt[:, :3])))
+            candidate = {
+                "xyz_permutation": list(permutation),
+                "xyz_signs": list(signs),
+                "xyz_mae": mae,
+                "xyz_cosine_mean": cosine,
+                "xyz_per_dim_mae": np.mean(np.abs(diff), axis=0).astype(float).tolist(),
+            }
+            if best is None or mae < best["xyz_mae"]:
+                best = candidate
+    if best is None:
+        return {}
+    return best
 
 
 def frame_error_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -203,6 +227,12 @@ def main() -> None:
     summary = error_summary(pred, gt)
     first_count = min(max(0, args.first_n), len(pred))
     first_summary = error_summary(pred[:first_count], gt[:first_count]) if first_count else {}
+    xyz_transform = best_xyz_signed_permutation(pred[:, :3], gt[:, :3])
+    first_xyz_transform = (
+        best_xyz_signed_permutation(pred[:first_count, :3], gt[:first_count, :3])
+        if first_count
+        else {}
+    )
     summary.update(
         {
             "hdf5_path": str(hdf5_path),
@@ -214,6 +244,8 @@ def main() -> None:
             "first_n_cosine_mean": first_summary.get("cosine_mean", ""),
             "first_n_per_dim_mae": first_summary.get("per_dim_mae", ""),
             "worst_frames": frame_error_rows(rows, args.worst_k),
+            "best_xyz_signed_permutation": xyz_transform,
+            "first_n_best_xyz_signed_permutation": first_xyz_transform,
             "best_shift": best_shift.get("shift", ""),
             "best_shift_action_mae_mean": best_shift.get("action_mae_mean", ""),
             "best_shift_cosine_mean": best_shift.get("cosine_mean", ""),
