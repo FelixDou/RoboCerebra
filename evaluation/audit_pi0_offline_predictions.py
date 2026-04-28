@@ -153,6 +153,10 @@ def summarize_errors(rows: list[dict[str, Any]]) -> dict[str, Any]:
     gripper_abs = np.asarray([row["gripper_abs_error"] for row in rows], dtype=np.float32)
     pred_norm = np.asarray([row["pred_action_norm"] for row in rows], dtype=np.float32)
     gt_norm = np.asarray([row["gt_action_norm"] for row in rows], dtype=np.float32)
+    raw_action_mae = np.asarray(
+        [row["raw_vs_normalized_gt_mae"] for row in rows if row["raw_vs_normalized_gt_mae"] != ""],
+        dtype=np.float32,
+    )
     return {
         "samples": len(rows),
         "action_mae_mean": float(np.mean(action_mae)),
@@ -163,18 +167,78 @@ def summarize_errors(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "gripper_abs_error_mean": float(np.mean(gripper_abs)),
         "pred_action_norm_mean": float(np.mean(pred_norm)),
         "gt_action_norm_mean": float(np.mean(gt_norm)),
+        "raw_vs_normalized_gt_mae_mean": float(np.mean(raw_action_mae)) if len(raw_action_mae) else "",
+        "raw_vs_normalized_gt_mae_median": float(np.median(raw_action_mae)) if len(raw_action_mae) else "",
+        "raw_vs_normalized_gt_mae_max": float(np.max(raw_action_mae)) if len(raw_action_mae) else "",
     }
+
+
+def clone_prediction(value: Any) -> Any:
+    if torch is not None and isinstance(value, torch.Tensor):
+        return value.detach().clone()
+    if isinstance(value, dict):
+        return {key: clone_prediction(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [clone_prediction(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(clone_prediction(item) for item in value)
+    return value
+
+
+def extract_action_stats(dataset: Any) -> tuple[np.ndarray | None, np.ndarray | None, str]:
+    stats = getattr(getattr(dataset, "meta", None), "stats", None)
+    if stats is None:
+        return None, None, "missing_dataset_meta_stats"
+    action_stats = stats.get("action") if isinstance(stats, dict) else getattr(stats, "action", None)
+    if action_stats is None:
+        return None, None, "missing_action_stats"
+    mean = action_stats.get("mean") if isinstance(action_stats, dict) else getattr(action_stats, "mean", None)
+    std = action_stats.get("std") if isinstance(action_stats, dict) else getattr(action_stats, "std", None)
+    if mean is None or std is None:
+        return None, None, "missing_action_mean_or_std"
+    mean_array = vector_to_float32(mean)
+    std_array = vector_to_float32(std)
+    std_array = np.maximum(std_array, 1e-8)
+    return mean_array, std_array, "ok"
+
+
+def predict_raw_and_postprocessed(policy_runtime: Any, observation: dict[str, Any], task: str) -> tuple[np.ndarray, np.ndarray]:
+    from policy_adapter import (
+        _build_lerobot_batch,
+        _ensure_batch_dim,
+        _move_to_device,
+        _to_action_sequence,
+    )
+
+    batch = _build_lerobot_batch(policy_runtime, observation, task)
+    if policy_runtime.preprocessor is not None:
+        batch = policy_runtime.preprocessor(batch)
+    batch = _ensure_batch_dim(batch, policy_runtime.input_features)
+    batch = _move_to_device(batch, policy_runtime.device)
+
+    with torch.inference_mode():
+        raw_actions = policy_runtime.model.select_action(batch)
+
+    raw_actions_for_post = clone_prediction(raw_actions)
+    raw_action = np.asarray(_to_action_sequence(raw_actions)[0], dtype=np.float32)
+
+    post_actions = raw_actions_for_post
+    if policy_runtime.postprocessor is not None:
+        post_actions = policy_runtime.postprocessor(post_actions)
+    post_action = np.asarray(_to_action_sequence(post_actions)[0], dtype=np.float32)
+    return raw_action, post_action
 
 
 def audit(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if torch is None:
         raise ImportError("This diagnostic requires torch in the runtime environment.")
-    from policy_adapter import initialize_policy, predict_policy_actions, reset_policy_state
+    from policy_adapter import initialize_policy, reset_policy_state
 
     dataset_root = Path(args.dataset_root).expanduser().resolve()
     repo_id = infer_repo_id(dataset_root, args.dataset_repo_id)
     dataset_handle = load_lerobot_dataset(dataset_root, repo_id)
     dataset = dataset_handle.dataset
+    action_mean, action_std, action_stats_status = extract_action_stats(dataset)
 
     cfg = SimpleNamespace(
         model_family="pi0",
@@ -189,8 +253,7 @@ def audit(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any
         frame = dataset[dataset_index]
         observation, gt_action, task, episode_index, frame_index = frame_to_observation(frame)
         reset_policy_state(policy_runtime)
-        predictions = predict_policy_actions(cfg, policy_runtime, observation, task)
-        pred_action = np.asarray(predictions[0], dtype=np.float32)
+        raw_action, pred_action = predict_raw_and_postprocessed(policy_runtime, observation, task)
 
         if pred_action.shape != gt_action.shape:
             raise ValueError(
@@ -199,6 +262,12 @@ def audit(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any
             )
 
         diff = pred_action - gt_action
+        normalized_gt_action = None
+        raw_diff = None
+        if action_mean is not None and action_std is not None and action_mean.shape == gt_action.shape:
+            normalized_gt_action = (gt_action - action_mean) / action_std
+            if raw_action.shape == normalized_gt_action.shape:
+                raw_diff = raw_action - normalized_gt_action
         rows.append(
             {
                 "sample_idx": sample_idx,
@@ -211,11 +280,20 @@ def audit(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any
                 "gripper_abs_error": float(abs(diff[-1])),
                 "pred_action_norm": float(np.linalg.norm(pred_action)),
                 "gt_action_norm": float(np.linalg.norm(gt_action)),
+                "raw_action_norm": float(np.linalg.norm(raw_action)),
+                "normalized_gt_action_norm": float(np.linalg.norm(normalized_gt_action)) if normalized_gt_action is not None else "",
+                "raw_vs_normalized_gt_mae": float(np.mean(np.abs(raw_diff))) if raw_diff is not None else "",
+                "raw_vs_normalized_gt_max_abs": float(np.max(np.abs(raw_diff))) if raw_diff is not None else "",
                 "pred_gripper": float(pred_action[-1]),
                 "gt_gripper": float(gt_action[-1]),
+                "raw_gripper": float(raw_action[-1]),
+                "normalized_gt_gripper": float(normalized_gt_action[-1]) if normalized_gt_action is not None else "",
                 "pred_action": json_cell(pred_action.round(6).tolist()),
+                "raw_action": json_cell(raw_action.round(6).tolist()),
                 "gt_action": json_cell(gt_action.round(6).tolist()),
+                "normalized_gt_action": json_cell(normalized_gt_action.round(6).tolist()) if normalized_gt_action is not None else "",
                 "diff": json_cell(diff.round(6).tolist()),
+                "raw_diff": json_cell(raw_diff.round(6).tolist()) if raw_diff is not None else "",
             }
         )
 
@@ -226,6 +304,9 @@ def audit(args: argparse.Namespace) -> tuple[list[dict[str, Any]], dict[str, Any
             "dataset_repo_id_used": dataset_handle.repo_id,
             "dataset_root_used": str(dataset_handle.root),
             "checkpoint": str(Path(args.checkpoint).expanduser()),
+            "action_stats_status": action_stats_status,
+            "action_mean": json_cell(action_mean.round(6).tolist()) if action_mean is not None else "",
+            "action_std": json_cell(action_std.round(6).tolist()) if action_std is not None else "",
         }
     )
     return rows, summary
