@@ -149,6 +149,48 @@ def run_segmented_replay(
     print(f"  summed_polled_positive_segment_deltas={total_after}")
 
 
+def scan_demo_states(env, goal, states: np.ndarray, intervals: list[tuple[str, int, int]]) -> None:
+    """Scan recorded states directly through the goal monitor.
+
+    This bypasses action execution. If this does not reach all goals, the issue is
+    likely goal annotations / monitor semantics / demo-state compatibility rather
+    than policy training.
+    """
+    env.reset()
+    max_completed = 0
+    first_reach: dict[int, int] = {}
+    last_details = None
+
+    for frame_idx, state in enumerate(states):
+        set_env_state(env, state)
+        _, total_completed_now, _ = env._check_success(goal)
+        total_completed_now = int(total_completed_now)
+        last_details = env._check_success(goal)[0]
+        if total_completed_now > max_completed:
+            for count in range(max_completed + 1, total_completed_now + 1):
+                first_reach[count] = frame_idx
+            max_completed = total_completed_now
+
+    print("DEMO_STATE_SCAN")
+    print(f"  max_completed={max_completed}")
+    print(f"  first_reach={json.dumps(first_reach, sort_keys=True)}")
+    print(f"  final_details={json.dumps(last_details, sort_keys=True)}")
+
+    for step_idx, (desc, start, end) in enumerate(intervals):
+        env.reset()
+        step_max = 0
+        step_first_reach: dict[int, int] = {}
+        for frame_idx in range(max(0, start), min(end, len(states))):
+            set_env_state(env, states[frame_idx])
+            _, total_completed_now, _ = env._check_success(goal)
+            total_completed_now = int(total_completed_now)
+            if total_completed_now > step_max:
+                for count in range(step_max + 1, total_completed_now + 1):
+                    step_first_reach[count] = frame_idx
+                step_max = total_completed_now
+        print(f"  segment={step_idx} frames=[{start},{end}) max_completed={step_max} first_reach={json.dumps(step_first_reach, sort_keys=True)} desc={desc!r}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--robocerebra_root", required=True, help="RoboCerebraBench root.")
@@ -189,6 +231,7 @@ def main() -> None:
 
     run_continuous_replay(env, goal, states, actions, initial_state)
     run_segmented_replay(env, goal, states, actions, intervals, resume_handler)
+    scan_demo_states(env, goal, states, intervals)
 
 
 if __name__ == "__main__":
