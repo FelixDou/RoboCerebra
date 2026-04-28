@@ -46,6 +46,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stride", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--max_shift", type=int, default=30, help="Evaluate pred[t] vs gt[t+shift].")
+    parser.add_argument("--first_n", type=int, default=20, help="Report summary over the first N sampled frames.")
+    parser.add_argument("--worst_k", type=int, default=10, help="Report the K highest-error sampled frames.")
     parser.add_argument("--output_csv", required=True)
     parser.add_argument("--shift_csv", required=True)
     return parser.parse_args()
@@ -88,6 +90,20 @@ def fit_per_dim_scale(pred: np.ndarray, gt: np.ndarray) -> tuple[np.ndarray, np.
     )
     scaled_pred = pred * scale[None, :]
     return scale.astype(np.float32), np.mean(np.abs(scaled_pred - gt), axis=0).astype(np.float32)
+
+
+def frame_error_rows(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    return [
+        {
+            "frame_index": int(row["frame_index"]),
+            "action_mae": float(row["action_mae"]),
+            "action_max_abs": float(row["action_max_abs"]),
+            "cosine": float(row["cosine"]),
+            "pred_norm": float(row["pred_norm"]),
+            "gt_norm": float(row["gt_norm"]),
+        }
+        for row in sorted(rows, key=lambda item: float(item["action_mae"]), reverse=True)[: max(0, limit)]
+    ]
 
 
 def shift_summaries(pred: np.ndarray, gt: np.ndarray, max_shift: int) -> list[dict[str, Any]]:
@@ -185,11 +201,19 @@ def main() -> None:
     best_shift = min(shifts, key=lambda row: row["action_mae_mean"]) if shifts else {}
     scale, scaled_per_dim_mae = fit_per_dim_scale(pred, gt)
     summary = error_summary(pred, gt)
+    first_count = min(max(0, args.first_n), len(pred))
+    first_summary = error_summary(pred[:first_count], gt[:first_count]) if first_count else {}
     summary.update(
         {
             "hdf5_path": str(hdf5_path),
             "task": task_desc,
             "checkpoint": str(Path(args.checkpoint).expanduser()),
+            "first_n": first_count,
+            "first_n_action_mae_mean": first_summary.get("action_mae_mean", ""),
+            "first_n_action_mae_median": first_summary.get("action_mae_median", ""),
+            "first_n_cosine_mean": first_summary.get("cosine_mean", ""),
+            "first_n_per_dim_mae": first_summary.get("per_dim_mae", ""),
+            "worst_frames": frame_error_rows(rows, args.worst_k),
             "best_shift": best_shift.get("shift", ""),
             "best_shift_action_mae_mean": best_shift.get("action_mae_mean", ""),
             "best_shift_cosine_mean": best_shift.get("cosine_mean", ""),
