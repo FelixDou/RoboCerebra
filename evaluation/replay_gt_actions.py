@@ -86,6 +86,19 @@ def completed_count(env, goal) -> tuple[int, dict]:
     return int(total), details
 
 
+def object_regions(env, obj: str) -> list[str]:
+    regions = [region for region in env.regions if env._eval_predicate(["in", obj, region])]
+    return regions or ["None"]
+
+
+def evaluate_raw_predicate(env, predicate: list[str]) -> bool:
+    if len(predicate) == 2:
+        return bool(env._eval_predicate(predicate))
+    if len(predicate) == 3:
+        return bool(env._eval_predicate(predicate))
+    raise ValueError(f"Unsupported predicate format: {predicate}")
+
+
 def run_continuous_replay(env, goal, states: np.ndarray, actions: np.ndarray, initial_state: np.ndarray | None) -> None:
     env.reset()
     set_env_state(env, states[0])
@@ -191,6 +204,57 @@ def scan_demo_states(env, goal, states: np.ndarray, intervals: list[tuple[str, i
         print(f"  segment={step_idx} frames=[{start},{end}) max_completed={step_max} first_reach={json.dumps(step_first_reach, sort_keys=True)} desc={desc!r}")
 
 
+def scan_failed_predicates(env, goal, states: np.ndarray, intervals: list[tuple[str, int, int]]) -> None:
+    """Report raw goal predicates that never become true in recorded states."""
+    print("FAILED_PREDICATE_SCAN")
+    for obj, predicates in goal.items():
+        observed_regions: set[str] = set()
+        predicate_hits: list[dict[str, object]] = []
+
+        for pred_idx, predicate in enumerate(predicates):
+            first_true = None
+            segment_idx = None
+            target = predicate[2] if len(predicate) == 3 else None
+
+            env.reset()
+            for frame_idx, state in enumerate(states):
+                set_env_state(env, state)
+                observed_regions.update(object_regions(env, obj))
+                if evaluate_raw_predicate(env, predicate):
+                    first_true = frame_idx
+                    for idx, (_, start, end) in enumerate(intervals):
+                        if start <= frame_idx < end:
+                            segment_idx = idx
+                            break
+                    break
+
+            set_env_state(env, states[-1])
+            final_regions = object_regions(env, obj)
+            predicate_hits.append(
+                {
+                    "predicate_index": pred_idx,
+                    "predicate": predicate,
+                    "target": target,
+                    "first_true_frame": first_true,
+                    "first_true_segment": segment_idx,
+                    "final_regions": final_regions,
+                }
+            )
+
+        missed = [entry for entry in predicate_hits if entry["first_true_frame"] is None]
+        print(f"  object={obj} observed_regions={sorted(observed_regions)}")
+        for entry in predicate_hits:
+            status = "HIT" if entry["first_true_frame"] is not None else "MISS"
+            print(
+                "    "
+                f"{status} idx={entry['predicate_index']} predicate={entry['predicate']} "
+                f"target={entry['target']} first_true_frame={entry['first_true_frame']} "
+                f"first_true_segment={entry['first_true_segment']} final_regions={entry['final_regions']}"
+            )
+        if missed:
+            print(f"    missed_count={len(missed)}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--robocerebra_root", required=True, help="RoboCerebraBench root.")
@@ -232,6 +296,7 @@ def main() -> None:
     run_continuous_replay(env, goal, states, actions, initial_state)
     run_segmented_replay(env, goal, states, actions, intervals, resume_handler)
     scan_demo_states(env, goal, states, intervals)
+    scan_failed_predicates(env, goal, states, intervals)
 
 
 if __name__ == "__main__":
