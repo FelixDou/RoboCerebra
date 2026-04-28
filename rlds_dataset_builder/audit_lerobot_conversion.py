@@ -172,12 +172,35 @@ def read_lerobot_actions(dataset_root: Path) -> list[np.ndarray]:
         return []
     try:
         import pandas as pd
+        import pyarrow.parquet as pq
     except ImportError as exc:
         raise ImportError("Reading LeRobot parquet files requires pandas/pyarrow.") from exc
 
     episodes: list[np.ndarray] = []
     for parquet_file in parquet_files:
-        frame = pd.read_parquet(parquet_file, columns=["action"])
+        schema_names = set(pq.read_schema(parquet_file).names)
+        if "action" not in schema_names:
+            continue
+
+        columns = ["action"]
+        if "episode_index" in schema_names:
+            columns.append("episode_index")
+        if "frame_index" in schema_names:
+            columns.append("frame_index")
+
+        frame = pd.read_parquet(parquet_file, columns=columns)
+        if "episode_index" in frame.columns:
+            grouped = frame.groupby("episode_index", sort=True)
+            for _, episode_frame in grouped:
+                if "frame_index" in episode_frame.columns:
+                    episode_frame = episode_frame.sort_values("frame_index")
+                actions = np.asarray(
+                    [np.asarray(value, dtype=np.float32) for value in episode_frame["action"]],
+                    dtype=np.float32,
+                )
+                episodes.append(actions)
+            continue
+
         actions = np.asarray([np.asarray(value, dtype=np.float32) for value in frame["action"]], dtype=np.float32)
         episodes.append(actions)
     return episodes
