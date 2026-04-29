@@ -103,6 +103,18 @@ def parse_args() -> argparse.Namespace:
         help="Optional cap for quick debugging runs.",
     )
     parser.add_argument(
+        "--frame_start",
+        type=int,
+        default=None,
+        help="Optional inclusive frame start within each selected HDF5 episode.",
+    )
+    parser.add_argument(
+        "--frame_end",
+        type=int,
+        default=None,
+        help="Optional exclusive frame end within each selected HDF5 episode.",
+    )
+    parser.add_argument(
         "--case_regex",
         default=None,
         help="Optional regex filter applied to converted case names.",
@@ -209,7 +221,36 @@ def build_feature_spec(_image_storage: str, _fps: int) -> dict[str, dict[str, ob
     }
 
 
-def load_episode_arrays(hdf5_path: Path) -> Iterable[dict[str, np.ndarray]]:
+def validate_frame_slice(frame_start: int | None, frame_end: int | None) -> None:
+    if frame_start is not None and frame_start < 0:
+        raise ValueError("--frame_start must be non-negative.")
+    if frame_end is not None and frame_end < 0:
+        raise ValueError("--frame_end must be non-negative.")
+    if frame_start is not None and frame_end is not None and frame_end <= frame_start:
+        raise ValueError("--frame_end must be greater than --frame_start.")
+
+
+def slice_episode_arrays(episode_arrays: dict[str, np.ndarray], frame_start: int | None, frame_end: int | None) -> dict[str, np.ndarray]:
+    if frame_start is None and frame_end is None:
+        return episode_arrays
+
+    start = 0 if frame_start is None else int(frame_start)
+    end = len(episode_arrays["actions"]) if frame_end is None else int(frame_end)
+    end = min(end, len(episode_arrays["actions"]))
+    if start >= end:
+        raise ValueError(
+            f"Frame slice [{start}, {end}) is empty for episode {episode_arrays.get('demo_name', '<unknown>')}."
+        )
+
+    sliced = dict(episode_arrays)
+    for key in ("images", "wrist_images", "state", "actions"):
+        sliced[key] = np.ascontiguousarray(episode_arrays[key][start:end])
+    sliced["source_frame_start"] = start
+    sliced["source_frame_end"] = end
+    return sliced
+
+
+def load_episode_arrays(hdf5_path: Path, frame_start: int | None = None, frame_end: int | None = None) -> Iterable[dict[str, np.ndarray]]:
     if h5py is None or np is None:
         raise ImportError(
             "This exporter requires both `h5py` and `numpy`. Install them before running the conversion."
@@ -239,13 +280,14 @@ def load_episode_arrays(hdf5_path: Path) -> Iterable[dict[str, np.ndarray]]:
             wrist_images = np.ascontiguousarray(wrist_images[:, ::-1, ::-1, :])
             state = np.ascontiguousarray(np.concatenate((ee_states, gripper_states), axis=-1), dtype=np.float32)
 
-            yield {
+            episode_arrays = {
                 "demo_name": demo_name,
                 "images": images,
                 "wrist_images": wrist_images,
                 "state": state,
                 "actions": np.ascontiguousarray(actions, dtype=np.float32),
             }
+            yield slice_episode_arrays(episode_arrays, frame_start, frame_end)
 
 
 def maybe_remove_existing_dataset(root: Path, repo_id: str, overwrite: bool) -> None:
@@ -361,6 +403,7 @@ def main() -> None:
     args = parse_args()
     if np is None:
         raise ImportError("This exporter requires `numpy`. Install it before running the conversion.")
+    validate_frame_slice(args.frame_start, args.frame_end)
 
     input_root = Path(args.robocerebra_hdf5_root).expanduser().resolve()
     root = Path(args.root).expanduser().resolve()
@@ -409,7 +452,7 @@ def main() -> None:
 
     try:
         for episode_spec in progress_iter:
-            for episode_arrays in load_episode_arrays(episode_spec.hdf5_path):
+            for episode_arrays in load_episode_arrays(episode_spec.hdf5_path, args.frame_start, args.frame_end):
                 total_frames += add_episode(dataset, episode_spec, episode_arrays)
                 total_episodes += 1
     finally:
@@ -422,6 +465,8 @@ def main() -> None:
     print(f"Frames          : {total_frames}")
     print(f"FPS             : {args.fps}")
     print(f"Image storage   : {args.image_storage}")
+    if args.frame_start is not None or args.frame_end is not None:
+        print(f"Frame slice     : [{args.frame_start if args.frame_start is not None else 0}, {args.frame_end if args.frame_end is not None else 'end'})")
 
 
 if __name__ == "__main__":
