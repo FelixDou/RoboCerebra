@@ -115,6 +115,20 @@ def parse_args() -> argparse.Namespace:
         help="Optional exclusive frame end within each selected HDF5 episode.",
     )
     parser.add_argument(
+        "--frame_range",
+        action="append",
+        default=[],
+        help=(
+            "Optional repeatable frame slice spec START:END[:REPEAT]. "
+            "Use with --include_full_episode to oversample hard windows while retaining the full episode."
+        ),
+    )
+    parser.add_argument(
+        "--include_full_episode",
+        action="store_true",
+        help="When --frame_range is used, also export the unsliced full episode once.",
+    )
+    parser.add_argument(
         "--case_regex",
         default=None,
         help="Optional regex filter applied to converted case names.",
@@ -230,9 +244,35 @@ def validate_frame_slice(frame_start: int | None, frame_end: int | None) -> None
         raise ValueError("--frame_end must be greater than --frame_start.")
 
 
-def slice_episode_arrays(episode_arrays: dict[str, np.ndarray], frame_start: int | None, frame_end: int | None) -> dict[str, np.ndarray]:
+def parse_frame_range_specs(raw_specs: list[str]) -> list[tuple[int, int, int]]:
+    parsed: list[tuple[int, int, int]] = []
+    for raw_spec in raw_specs:
+        parts = raw_spec.split(":")
+        if len(parts) not in {2, 3}:
+            raise ValueError(f"Invalid --frame_range {raw_spec!r}; expected START:END[:REPEAT].")
+        try:
+            start = int(parts[0])
+            end = int(parts[1])
+            repeat = int(parts[2]) if len(parts) == 3 else 1
+        except ValueError as exc:
+            raise ValueError(f"Invalid --frame_range {raw_spec!r}; all fields must be integers.") from exc
+        validate_frame_slice(start, end)
+        if repeat <= 0:
+            raise ValueError(f"Invalid --frame_range {raw_spec!r}; REPEAT must be positive.")
+        parsed.append((start, end, repeat))
+    return parsed
+
+
+def slice_episode_arrays(
+    episode_arrays: dict[str, np.ndarray],
+    frame_start: int | None,
+    frame_end: int | None,
+    slice_name: str | None = None,
+) -> dict[str, np.ndarray]:
     if frame_start is None and frame_end is None:
-        return episode_arrays
+        sliced = dict(episode_arrays)
+        sliced["slice_name"] = slice_name or "full"
+        return sliced
 
     start = 0 if frame_start is None else int(frame_start)
     end = len(episode_arrays["actions"]) if frame_end is None else int(frame_end)
@@ -247,10 +287,17 @@ def slice_episode_arrays(episode_arrays: dict[str, np.ndarray], frame_start: int
         sliced[key] = np.ascontiguousarray(episode_arrays[key][start:end])
     sliced["source_frame_start"] = start
     sliced["source_frame_end"] = end
+    sliced["slice_name"] = slice_name or f"frames_{start}_{end}"
     return sliced
 
 
-def load_episode_arrays(hdf5_path: Path, frame_start: int | None = None, frame_end: int | None = None) -> Iterable[dict[str, np.ndarray]]:
+def load_episode_arrays(
+    hdf5_path: Path,
+    frame_start: int | None = None,
+    frame_end: int | None = None,
+    frame_ranges: list[tuple[int, int, int]] | None = None,
+    include_full_episode: bool = False,
+) -> Iterable[dict[str, np.ndarray]]:
     if h5py is None or np is None:
         raise ImportError(
             "This exporter requires both `h5py` and `numpy`. Install them before running the conversion."
@@ -287,7 +334,19 @@ def load_episode_arrays(hdf5_path: Path, frame_start: int | None = None, frame_e
                 "state": state,
                 "actions": np.ascontiguousarray(actions, dtype=np.float32),
             }
-            yield slice_episode_arrays(episode_arrays, frame_start, frame_end)
+            if frame_ranges:
+                if include_full_episode:
+                    yield slice_episode_arrays(episode_arrays, None, None, "full")
+                for start, end, repeat in frame_ranges:
+                    for repeat_index in range(repeat):
+                        yield slice_episode_arrays(
+                            episode_arrays,
+                            start,
+                            end,
+                            f"frames_{start}_{end}_repeat_{repeat_index}",
+                        )
+            else:
+                yield slice_episode_arrays(episode_arrays, frame_start, frame_end)
 
 
 def maybe_remove_existing_dataset(root: Path, repo_id: str, overwrite: bool) -> None:
@@ -404,6 +463,9 @@ def main() -> None:
     if np is None:
         raise ImportError("This exporter requires `numpy`. Install it before running the conversion.")
     validate_frame_slice(args.frame_start, args.frame_end)
+    frame_ranges = parse_frame_range_specs(args.frame_range)
+    if frame_ranges and (args.frame_start is not None or args.frame_end is not None):
+        raise ValueError("Use either --frame_range or --frame_start/--frame_end, not both.")
 
     input_root = Path(args.robocerebra_hdf5_root).expanduser().resolve()
     root = Path(args.root).expanduser().resolve()
@@ -452,7 +514,13 @@ def main() -> None:
 
     try:
         for episode_spec in progress_iter:
-            for episode_arrays in load_episode_arrays(episode_spec.hdf5_path, args.frame_start, args.frame_end):
+            for episode_arrays in load_episode_arrays(
+                episode_spec.hdf5_path,
+                args.frame_start,
+                args.frame_end,
+                frame_ranges=frame_ranges,
+                include_full_episode=args.include_full_episode,
+            ):
                 total_frames += add_episode(dataset, episode_spec, episode_arrays)
                 total_episodes += 1
     finally:
@@ -467,6 +535,9 @@ def main() -> None:
     print(f"Image storage   : {args.image_storage}")
     if args.frame_start is not None or args.frame_end is not None:
         print(f"Frame slice     : [{args.frame_start if args.frame_start is not None else 0}, {args.frame_end if args.frame_end is not None else 'end'})")
+    if frame_ranges:
+        print(f"Frame ranges    : {args.frame_range}")
+        print(f"Include full    : {args.include_full_episode}")
 
 
 if __name__ == "__main__":
