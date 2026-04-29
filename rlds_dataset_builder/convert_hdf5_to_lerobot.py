@@ -108,6 +108,11 @@ def parse_args() -> argparse.Namespace:
         help="Optional regex filter applied to converted case names.",
     )
     parser.add_argument(
+        "--step_regex",
+        default=None,
+        help="Optional regex filter applied to step directory names or formatted instructions.",
+    )
+    parser.add_argument(
         "--max_cases",
         type=int,
         default=None,
@@ -364,6 +369,13 @@ def main() -> None:
     if args.case_regex:
         pattern = re.compile(args.case_regex)
         episode_specs = [episode_spec for episode_spec in episode_specs if pattern.search(episode_spec.case_name)]
+    if args.step_regex:
+        pattern = re.compile(args.step_regex)
+        episode_specs = [
+            episode_spec
+            for episode_spec in episode_specs
+            if pattern.search(episode_spec.step_name) or pattern.search(episode_spec.instruction)
+        ]
     if args.max_cases is not None:
         selected_cases = []
         selected_case_set = set()
