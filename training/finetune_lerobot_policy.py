@@ -158,6 +158,14 @@ def parse_args() -> argparse.Namespace:
         help="Extra raw argument appended verbatim to the underlying `lerobot-train` command. Repeatable.",
     )
     parser.add_argument(
+        "--inprocess_train",
+        action="store_true",
+        help=(
+            "Run LeRobot training in this Python process instead of spawning `lerobot-train`. "
+            "This is required when using the local PI compatibility patches on a single dataset."
+        ),
+    )
+    parser.add_argument(
         "--dry_run",
         action="store_true",
         help="Print the resolved command without executing it.",
@@ -962,9 +970,11 @@ def main() -> None:
     if args.dry_run:
         return
 
-    if len(repo_ids) > 1:
+    run_inprocess = args.inprocess_train or len(repo_ids) > 1
+    if run_inprocess:
         train_module = import_lerobot_train_module()
-        patch_make_dataset_for_local_shards(train_module, repo_ids, Path(args.dataset_root))
+        if len(repo_ids) > 1:
+            patch_make_dataset_for_local_shards(train_module, repo_ids, Path(args.dataset_root))
         model_family = canonicalize_model_family(args.model_family)
         if model_family in {"pi0", "pi05"}:
             patch_policy_text_mask_compat(model_family)
