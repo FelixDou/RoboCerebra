@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--case_name", default="case5")
     parser.add_argument("--step_index", type=int, default=0)
     parser.add_argument("--model_family", choices=["pi0", "pi05"], default="pi0")
+    parser.add_argument("--pi_action_seed", type=int, default=None, help="Optional fixed seed before PI select_action.")
     parser.add_argument("--max_samples", type=int, default=1000000, help="Cap frames to evaluate.")
     parser.add_argument("--stride", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -168,7 +169,11 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def predict_episode(args: argparse.Namespace, episode: dict[str, np.ndarray], task_desc: str) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
-    cfg = SimpleNamespace(model_family=args.model_family, pretrained_checkpoint=str(Path(args.checkpoint).expanduser()))
+    cfg = SimpleNamespace(
+        model_family=args.model_family,
+        pretrained_checkpoint=str(Path(args.checkpoint).expanduser()),
+        pi_action_seed=args.pi_action_seed,
+    )
     policy_runtime = initialize_policy(cfg)
 
     indices = sample_indices(len(episode["actions"]), args.max_samples, args.stride, args.seed)
@@ -238,6 +243,7 @@ def main() -> None:
             "hdf5_path": str(hdf5_path),
             "task": task_desc,
             "checkpoint": str(Path(args.checkpoint).expanduser()),
+            "pi_action_seed": args.pi_action_seed,
             "first_n": first_count,
             "first_n_action_mae_mean": first_summary.get("action_mae_mean", ""),
             "first_n_action_mae_median": first_summary.get("action_mae_median", ""),

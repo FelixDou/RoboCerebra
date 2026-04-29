@@ -93,7 +93,7 @@ def predict_policy_actions(cfg, policy_runtime: PolicyRuntime, observation: Dict
     if policy_runtime.model_family == "openvla":
         return _predict_openvla_actions(cfg, policy_runtime, observation, desc)
     if policy_runtime.model_family in {"pi0", "pi05"}:
-        return _predict_lerobot_actions(policy_runtime, observation, desc)
+        return _predict_lerobot_actions(cfg, policy_runtime, observation, desc)
 
     raise ValueError(f"Unsupported model family: {policy_runtime.model_family}")
 
@@ -190,7 +190,7 @@ def _predict_openvla_actions(cfg, policy_runtime: PolicyRuntime, observation: Di
     )
 
 
-def _predict_lerobot_actions(policy_runtime: PolicyRuntime, observation: Dict[str, Any], desc: str) -> List[np.ndarray]:
+def _predict_lerobot_actions(cfg, policy_runtime: PolicyRuntime, observation: Dict[str, Any], desc: str) -> List[np.ndarray]:
     batch = _build_lerobot_batch(policy_runtime, observation, desc)
 
     if policy_runtime.preprocessor is not None:
@@ -200,12 +200,24 @@ def _predict_lerobot_actions(policy_runtime: PolicyRuntime, observation: Dict[st
     batch = _move_to_device(batch, policy_runtime.device)
 
     with torch.inference_mode():
-        actions = policy_runtime.model.select_action(batch)
+        actions = _select_lerobot_action_with_optional_seed(cfg, policy_runtime, batch)
 
     if policy_runtime.postprocessor is not None:
         actions = policy_runtime.postprocessor(actions)
 
     return _to_action_sequence(actions)
+
+
+def _select_lerobot_action_with_optional_seed(cfg, policy_runtime: PolicyRuntime, batch: Dict[str, Any]) -> Any:
+    action_seed = getattr(cfg, "pi_action_seed", None)
+    if action_seed is None:
+        return policy_runtime.model.select_action(batch)
+
+    seed = int(action_seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    return policy_runtime.model.select_action(batch)
 
 
 def _build_lerobot_batch(policy_runtime: PolicyRuntime, observation: Dict[str, Any], desc: str) -> Dict[str, Any]:

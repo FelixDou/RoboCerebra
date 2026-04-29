@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frames", default="0,1,2,3,4,16,17", help="Comma-separated per-step frame indices.")
     parser.add_argument("--num_repeats", type=int, default=20)
     parser.add_argument("--model_family", choices=["pi0", "pi05"], default="pi0")
+    parser.add_argument("--pi_action_seed", type=int, default=None, help="Optional fixed seed before PI select_action.")
     parser.add_argument(
         "--reset_each_repeat",
         action=argparse.BooleanOptionalAction,
@@ -134,7 +135,11 @@ def main() -> None:
     episode = load_hdf5_episode(hdf5_path)
     frames = parse_frames(args.frames)
 
-    cfg = SimpleNamespace(model_family=args.model_family, pretrained_checkpoint=str(Path(args.checkpoint).expanduser()))
+    cfg = SimpleNamespace(
+        model_family=args.model_family,
+        pretrained_checkpoint=str(Path(args.checkpoint).expanduser()),
+        pi_action_seed=args.pi_action_seed,
+    )
     policy_runtime = initialize_policy(cfg)
 
     rows: list[dict[str, Any]] = []
@@ -163,6 +168,7 @@ def main() -> None:
     print(f"  checkpoint={Path(args.checkpoint).expanduser()}")
     print(f"  num_repeats={args.num_repeats}")
     print(f"  reset_each_repeat={args.reset_each_repeat}")
+    print(f"  pi_action_seed={args.pi_action_seed}")
     print(f"  repeat_std_mean_avg={float(np.mean(repeat_std_mean))}")
     print(f"  repeat_std_mean_max={float(np.max(repeat_std_mean))}")
     print(f"  pairwise_l2_mean_avg={float(np.mean(pairwise_l2_mean))}")

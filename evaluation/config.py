@@ -94,6 +94,7 @@ class GenerateConfig:
     wandb_entity: str = "<WANDB_ENTITY>"  # TODO: Set your WandB entity name
     wandb_project: str = "<WANDB_PROJECT>"  # TODO: Set your WandB project name
     seed: int = 7
+    pi_action_seed: Optional[int] = None  # Optional fixed seed before PI-family select_action for deterministic sampling.
     
     def __post_init__(self):
         if self.task_types is None:

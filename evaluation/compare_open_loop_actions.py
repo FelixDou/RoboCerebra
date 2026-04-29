@@ -50,6 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_steps", type=int, default=None, help="Optional cap within the selected segment.")
     parser.add_argument("--fps", type=int, default=20)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--pi_action_seed", type=int, default=None, help="Optional fixed seed before PI select_action.")
     return parser.parse_args()
 
 
@@ -61,6 +62,7 @@ def make_cfg(args: argparse.Namespace) -> GenerateConfig:
     cfg.init_files_root = str(Path(args.robocerebra_root) / "init_files")
     cfg.task_types = [args.task_type]
     cfg.seed = args.seed
+    cfg.pi_action_seed = args.pi_action_seed
     cfg.use_init_files = True
     cfg.resume = False
     return cfg

@@ -41,6 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step_index", type=int, default=0)
     parser.add_argument("--checkpoint", default=None, help="Optional PI0/PI05 checkpoint for prediction comparison.")
     parser.add_argument("--model_family", choices=["pi0", "pi05"], default="pi0")
+    parser.add_argument("--pi_action_seed", type=int, default=None, help="Optional fixed seed before PI select_action.")
     parser.add_argument("--max_samples", type=int, default=64)
     parser.add_argument("--stride", type=int, default=None)
     parser.add_argument("--seed", type=int, default=0)
@@ -147,7 +148,11 @@ def main() -> None:
     cfg = None
     policy_runtime = None
     if args.checkpoint:
-        cfg = SimpleNamespace(model_family=args.model_family, pretrained_checkpoint=str(Path(args.checkpoint).expanduser()))
+        cfg = SimpleNamespace(
+            model_family=args.model_family,
+            pretrained_checkpoint=str(Path(args.checkpoint).expanduser()),
+            pi_action_seed=args.pi_action_seed,
+        )
         policy_runtime = initialize_policy(cfg)
 
     rows: list[dict[str, Any]] = []
