@@ -50,6 +50,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_shift", type=int, default=30, help="Evaluate pred[t] vs gt[t+shift].")
     parser.add_argument("--first_n", type=int, default=20, help="Report summary over the first N sampled frames.")
     parser.add_argument("--worst_k", type=int, default=10, help="Report the K highest-error sampled frames.")
+    parser.add_argument(
+        "--preserve_observation_history",
+        action="store_true",
+        help=(
+            "Do not reset PI state/history before every frame. Use this with checkpoints trained "
+            "with policy.n_obs_steps > 1 and sequential --stride 1 audits."
+        ),
+    )
     parser.add_argument("--output_csv", required=True)
     parser.add_argument("--shift_csv", required=True)
     return parser.parse_args()
@@ -181,10 +189,12 @@ def predict_episode(args: argparse.Namespace, episode: dict[str, np.ndarray], ta
     gt_actions: list[np.ndarray] = []
     rows: list[dict[str, Any]] = []
 
+    reset_policy_state(policy_runtime)
     for sample_idx, frame_index in enumerate(indices):
         observation = stored_observation(episode, frame_index)
         gt_action = np.asarray(episode["actions"][frame_index], dtype=np.float32).reshape(-1)
-        reset_policy_state(policy_runtime)
+        if not args.preserve_observation_history:
+            reset_policy_state(policy_runtime)
         pred_actions = predict_policy_actions(cfg, policy_runtime, observation, task_desc)
         if not pred_actions:
             raise RuntimeError("Policy returned no actions.")

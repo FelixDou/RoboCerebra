@@ -16,6 +16,7 @@ from __future__ import annotations
 import inspect
 import random
 import sys
+from collections import deque
 from types import SimpleNamespace
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -43,6 +44,8 @@ class PolicyRuntime:
     device: Optional[torch.device] = None
     input_features: Dict[str, Any] = field(default_factory=dict)
     uses_internal_action_queue: bool = False
+    n_obs_steps: int = 1
+    observation_history: Any = None
 
 
 def canonicalize_model_family(model_family: str) -> str:
@@ -86,6 +89,9 @@ def reset_policy_state(policy_runtime: PolicyRuntime) -> None:
     reset_fn = getattr(policy_runtime.model, "reset", None)
     if callable(reset_fn):
         reset_fn()
+    history = getattr(policy_runtime, "observation_history", None)
+    if history is not None:
+        history.clear()
 
 
 def predict_policy_actions(cfg, policy_runtime: PolicyRuntime, observation: Dict[str, Any], desc: str) -> List[np.ndarray]:
@@ -161,6 +167,7 @@ def _initialize_lerobot_policy(cfg, policy_family: str) -> PolicyRuntime:
             postprocessor.eval()
 
     input_features = _extract_lerobot_input_features(policy_cfg)
+    n_obs_steps = max(1, int(getattr(policy_cfg, "n_obs_steps", 1) or 1))
 
     return PolicyRuntime(
         model_family=policy_family,
@@ -171,6 +178,8 @@ def _initialize_lerobot_policy(cfg, policy_family: str) -> PolicyRuntime:
         device=device,
         input_features=dict(input_features),
         uses_internal_action_queue=True,
+        n_obs_steps=n_obs_steps,
+        observation_history=deque(maxlen=n_obs_steps),
     )
 
 
@@ -226,6 +235,8 @@ def _build_lerobot_batch(policy_runtime: PolicyRuntime, observation: Dict[str, A
     state = torch.as_tensor(observation["state"], dtype=torch.float32)
     task = str(desc).strip()
 
+    full_image, wrist_image, state = _apply_observation_history(policy_runtime, full_image, wrist_image, state)
+
     batch: Dict[str, Any] = {"task": task}
     visual_features: List[str] = []
     state_features: List[str] = []
@@ -253,6 +264,40 @@ def _build_lerobot_batch(policy_runtime: PolicyRuntime, observation: Dict[str, A
         batch[feature_name] = state
 
     return batch
+
+
+def _apply_observation_history(
+    policy_runtime: PolicyRuntime,
+    full_image: torch.Tensor,
+    wrist_image: torch.Tensor,
+    state: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    n_obs_steps = max(1, int(getattr(policy_runtime, "n_obs_steps", 1) or 1))
+    if n_obs_steps <= 1:
+        return full_image, wrist_image, state
+
+    history = getattr(policy_runtime, "observation_history", None)
+    if history is None:
+        history = deque(maxlen=n_obs_steps)
+        policy_runtime.observation_history = history
+
+    history.append(
+        {
+            "full_image": full_image,
+            "wrist_image": wrist_image,
+            "state": state,
+        }
+    )
+
+    frames = list(history)
+    while len(frames) < n_obs_steps:
+        frames.insert(0, frames[0])
+
+    return (
+        torch.stack([frame["full_image"] for frame in frames], dim=0),
+        torch.stack([frame["wrist_image"] for frame in frames], dim=0),
+        torch.stack([frame["state"] for frame in frames], dim=0),
+    )
 
 
 def _empty_camera_tensor(feature_spec: Any, reference_image: torch.Tensor) -> torch.Tensor:
@@ -294,7 +339,11 @@ def _ensure_value_batch_dim(key: str, value: Any, input_features: Dict[str, Any]
             return value.unsqueeze(0)
         if key.startswith("observation.images.") and value.ndim == 3:
             return value.unsqueeze(0)
+        if key.startswith("observation.images.") and value.ndim == 4:
+            return value.unsqueeze(0)
         if key.startswith("observation.state") and value.ndim == 1:
+            return value.unsqueeze(0)
+        if key.startswith("observation.state") and value.ndim == 2:
             return value.unsqueeze(0)
         return value
 
@@ -303,7 +352,11 @@ def _ensure_value_batch_dim(key: str, value: Any, input_features: Dict[str, Any]
             return np.expand_dims(value, axis=0)
         if key.startswith("observation.images.") and value.ndim == 3:
             return np.expand_dims(value, axis=0)
+        if key.startswith("observation.images.") and value.ndim == 4:
+            return np.expand_dims(value, axis=0)
         if key.startswith("observation.state") and value.ndim == 1:
+            return np.expand_dims(value, axis=0)
+        if key.startswith("observation.state") and value.ndim == 2:
             return np.expand_dims(value, axis=0)
         return value
 
