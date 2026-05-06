@@ -31,6 +31,12 @@ Optional:
   --num-trials N
       Defaults to 5.
 
+  --task-suite-name NAME
+      OpenVLA action un-normalization key / task suite name.
+      For LIBERO OpenVLA-OFT reference checkpoints, inspect model.norm_stats
+      and pass the matching key, for example libero_spatial_no_noops.
+      Defaults to eval_openvla.py's config default.
+
   --gpu-ids CSV
       Comma-separated visible GPU ids to round-robin over. Defaults to 0.
 
@@ -57,6 +63,7 @@ EOF
 CHECKPOINT="moojink/openvla-7b-oft-finetuned-libero-spatial-object-goal-10"
 NUM_TRIALS="5"
 TASK_TYPES="Ideal,Random_Disturbance,Mix,Observation_Mismatching,Memory_Execution,Memory_Exploration"
+TASK_SUITE_NAME=""
 GPU_IDS="0"
 BENCH_ROOT=""
 INIT_FILES_ROOT=""
@@ -84,6 +91,10 @@ while (($#)); do
       ;;
     --num-trials)
       NUM_TRIALS="$2"
+      shift 2
+      ;;
+    --task-suite-name)
+      TASK_SUITE_NAME="$2"
       shift 2
       ;;
     --gpu-ids)
@@ -189,6 +200,9 @@ echo "Init files root: ${INIT_FILES_ROOT}" | tee -a "$MASTER_LOG"
 echo "Checkpoint: ${CHECKPOINT}" | tee -a "$MASTER_LOG"
 echo "Task types: ${TASK_TYPES}" | tee -a "$MASTER_LOG"
 echo "Num trials: ${NUM_TRIALS}" | tee -a "$MASTER_LOG"
+if [[ -n "$TASK_SUITE_NAME" ]]; then
+  echo "Task suite / unnorm key: ${TASK_SUITE_NAME}" | tee -a "$MASTER_LOG"
+fi
 echo "GPU ids: ${GPU_IDS}" | tee -a "$MASTER_LOG"
 echo "Eval log dir: ${EVAL_LOG_DIR}" | tee -a "$MASTER_LOG"
 echo "Rollout root: ${ROLLOUT_ROOT}" | tee -a "$MASTER_LOG"
@@ -223,7 +237,7 @@ launch_eval_job() {
     cd "$EVAL_DIR"
     export CUDA_VISIBLE_DEVICES="$gpu"
     export MUJOCO_GL="${MUJOCO_GL:-egl}"
-    python eval_openvla.py \
+    eval_args=(
       --model_family openvla \
       --pretrained_checkpoint "$CHECKPOINT" \
       --robocerebra_root "$BENCH_ROOT" \
@@ -232,8 +246,12 @@ launch_eval_job() {
       --num_trials_per_task "$NUM_TRIALS" \
       --local_log_dir "$EVAL_LOG_DIR" \
       --rollout_dir "$rollout_dir" \
-      --run_id_note "$job_note" \
-      > "$log_path" 2>&1
+      --run_id_note "$job_note"
+    )
+    if [[ -n "$TASK_SUITE_NAME" ]]; then
+      eval_args+=(--task_suite_name "$TASK_SUITE_NAME")
+    fi
+    python eval_openvla.py "${eval_args[@]}" > "$log_path" 2>&1
   ) &
 }
 
