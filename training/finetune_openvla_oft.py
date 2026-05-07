@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -29,21 +30,21 @@ DEFAULT_ROBOCEREBRA_MIXTURE_NAME = "robocerebra_train_full"
 ROBOCEREBRA_TRAINSET_PRESETS: dict[str, tuple[str, ...]] = {
     "full": (
         "RoboCerebra_trainset_coffee_table_p1p2_rlds/homerobo_trainset_p1p2",
-        "RoboCerebra_trainset_coffee_table_p3_rlds/homerobo_trainset_p3",
-        "RoboCerebra_trainset_kitchen_table_p1_rlds/homerobo_trainset_kitchen_table_p1",
-        "RoboCerebra_trainset_study_table_p1_rlds/homerobo_trainset_study_table_p1",
+        "RoboCerebra_trainset_coffee_table_p3_rlds/homerobo_trainset_p1p2",
+        "RoboCerebra_trainset_kitchen_table_p1_rlds/homerobo_trainset_p1p2",
+        "RoboCerebra_trainset_study_table_p1_rlds/homerobo_trainset_p1p2",
     ),
     "coffee_table_p1p2": (
         "RoboCerebra_trainset_coffee_table_p1p2_rlds/homerobo_trainset_p1p2",
     ),
     "coffee_table_p3": (
-        "RoboCerebra_trainset_coffee_table_p3_rlds/homerobo_trainset_p3",
+        "RoboCerebra_trainset_coffee_table_p3_rlds/homerobo_trainset_p1p2",
     ),
     "kitchen_table_p1": (
-        "RoboCerebra_trainset_kitchen_table_p1_rlds/homerobo_trainset_kitchen_table_p1",
+        "RoboCerebra_trainset_kitchen_table_p1_rlds/homerobo_trainset_p1p2",
     ),
     "study_table_p1": (
-        "RoboCerebra_trainset_study_table_p1_rlds/homerobo_trainset_study_table_p1",
+        "RoboCerebra_trainset_study_table_p1_rlds/homerobo_trainset_p1p2",
     ),
 }
 
@@ -113,8 +114,10 @@ def parse_args() -> argparse.Namespace:
         "--stage_data_root_dir",
         default=None,
         help=(
-            "Directory where repeated --rlds_dir datasets are symlinked so OpenVLA-OFT can load them "
-            "from one data_root_dir. Defaults to <run_root_dir>/tfds_staging/<job_name>."
+            "Directory where --rlds_dir datasets are symlinked under unique TFDS names so OpenVLA-OFT "
+            "can load them from one data_root_dir. Use a local path such as /tmp/... on clusters where "
+            "/gs/... paths are interpreted as GCS. Defaults to $ROBOCEREBRA_TFDS_STAGE_ROOT/<job_name>, "
+            "or /tmp/<user>_robocerebra_tfds/<job_name>."
         ),
     )
     parser.add_argument(
@@ -343,22 +346,65 @@ def expand_rlds_dirs(args: argparse.Namespace) -> list[str]:
     return rlds_dirs
 
 
-def stage_tfds_dataset_roots(dataset_refs: list[TFDSDatasetRef], stage_root: Path, dry_run: bool) -> Path:
-    seen_names: set[str] = set()
-    duplicate_names: set[str] = set()
-    for ref in dataset_refs:
-        if ref.dataset_name in seen_names:
-            duplicate_names.add(ref.dataset_name)
-        seen_names.add(ref.dataset_name)
-    if duplicate_names:
-        raise ValueError(f"Duplicate TFDS dataset names are not supported: {', '.join(duplicate_names)}")
+def sanitize_tfds_name(value: str) -> str:
+    """Return a filesystem- and TFDS-friendly dataset alias."""
+    value = value.strip().lower()
+    value = re.sub(r"[^a-z0-9_]+", "_", value)
+    value = re.sub(r"_+", "_", value).strip("_")
+    if not value:
+        raise ValueError("Cannot create an empty TFDS dataset alias.")
+    if value[0].isdigit():
+        value = f"dataset_{value}"
+    return value
+
+
+def infer_robocerebra_dataset_alias(ref: TFDSDatasetRef, index: int) -> str:
+    """Infer a stable alias for staged RoboCerebra trainset shards."""
+    parent_name = ref.dataset_root.parent.name
+    prefix = "RoboCerebra_trainset_"
+    suffix = "_rlds"
+    if parent_name.startswith(prefix) and parent_name.endswith(suffix):
+        shard_name = parent_name[len(prefix):-len(suffix)]
+        return sanitize_tfds_name(f"robocerebra_{shard_name}")
+    return sanitize_tfds_name(f"{ref.dataset_name}_{index}")
+
+
+def unique_tfds_aliases(dataset_refs: list[TFDSDatasetRef]) -> list[str]:
+    aliases: list[str] = []
+    seen: set[str] = set()
+    duplicate_source_names = len({ref.dataset_name for ref in dataset_refs}) != len(dataset_refs)
+    for index, ref in enumerate(dataset_refs):
+        alias = infer_robocerebra_dataset_alias(ref, index) if duplicate_source_names else ref.dataset_name
+        alias = sanitize_tfds_name(alias)
+        base_alias = alias
+        suffix = 1
+        while alias in seen:
+            suffix += 1
+            alias = sanitize_tfds_name(f"{base_alias}_{suffix}")
+        aliases.append(alias)
+        seen.add(alias)
+    return aliases
+
+
+def default_stage_root(args: argparse.Namespace) -> Path:
+    raw_root = os.environ.get("ROBOCEREBRA_TFDS_STAGE_ROOT")
+    if raw_root:
+        return Path(raw_root).expanduser().resolve() / args.job_name
+    user = os.environ.get("USER") or "user"
+    return Path("/tmp") / f"{user}_robocerebra_tfds" / args.job_name
+
+
+def stage_tfds_dataset_roots(
+    dataset_refs: list[TFDSDatasetRef], stage_root: Path, dry_run: bool
+) -> tuple[Path, list[str]]:
+    dataset_aliases = unique_tfds_aliases(dataset_refs)
 
     if dry_run:
-        return stage_root
+        return stage_root, dataset_aliases
 
     stage_root.mkdir(parents=True, exist_ok=True)
-    for ref in dataset_refs:
-        link_path = stage_root / ref.dataset_name
+    for ref, dataset_alias in zip(dataset_refs, dataset_aliases):
+        link_path = stage_root / dataset_alias
         if link_path.exists() or link_path.is_symlink():
             try:
                 if link_path.resolve() == ref.dataset_root.resolve():
@@ -366,37 +412,47 @@ def stage_tfds_dataset_roots(dataset_refs: list[TFDSDatasetRef], stage_root: Pat
             except FileNotFoundError:
                 pass
             raise FileExistsError(
-                f"Cannot stage TFDS dataset {ref.dataset_name}: {link_path} already exists "
+                f"Cannot stage TFDS dataset {dataset_alias}: {link_path} already exists "
                 f"and does not point to {ref.dataset_root}."
             )
         link_path.symlink_to(ref.dataset_root, target_is_directory=True)
-    return stage_root
+    return stage_root, dataset_aliases
 
 
 def resolve_dataset_args(args: argparse.Namespace) -> tuple[Path, str, list[str]]:
     expanded_rlds_dirs = expand_rlds_dirs(args)
     if expanded_rlds_dirs:
         dataset_refs = [infer_tfds_dataset_from_rlds_dir(path_str) for path_str in expanded_rlds_dirs]
-        if len(dataset_refs) == 1:
+        if args.stage_data_root_dir:
+            stage_root = Path(args.stage_data_root_dir).expanduser().resolve()
+            data_root_dir, registered_dataset_names = stage_tfds_dataset_roots(
+                dataset_refs, stage_root, args.dry_run
+            )
+            dataset_name = args.dataset_name or (
+                registered_dataset_names[0] if len(registered_dataset_names) == 1 else args.robocerebra_mixture_name
+            )
+        elif len(dataset_refs) == 1:
             data_root_dir = (
                 Path(args.data_root_dir).expanduser().resolve()
                 if args.data_root_dir
                 else dataset_refs[0].data_root_dir
             )
             dataset_name = args.dataset_name or dataset_refs[0].dataset_name
+            registered_dataset_names = [dataset_name]
         else:
             if args.data_root_dir:
                 data_root_dir = Path(args.data_root_dir).expanduser().resolve()
+                registered_dataset_names = unique_tfds_aliases(dataset_refs)
             else:
-                default_stage_root = Path(args.run_root_dir).expanduser().resolve() / "tfds_staging" / args.job_name
                 stage_root = (
                     Path(args.stage_data_root_dir).expanduser().resolve()
                     if args.stage_data_root_dir
-                    else default_stage_root
+                    else default_stage_root(args)
                 )
-                data_root_dir = stage_tfds_dataset_roots(dataset_refs, stage_root, args.dry_run)
+                data_root_dir, registered_dataset_names = stage_tfds_dataset_roots(
+                    dataset_refs, stage_root, args.dry_run
+                )
             dataset_name = args.dataset_name or args.robocerebra_mixture_name
-        registered_dataset_names = [ref.dataset_name for ref in dataset_refs]
     else:
         if not args.data_root_dir or not args.dataset_name:
             raise ValueError(
